@@ -8,8 +8,9 @@ from datetime import datetime, date
 # Import utils and refactored apps
 import cr_utils
 import run_rate_utils
-import cr  # This imports your refactored cr.py file
-import run_rate_app_refactored # This imports your run_rate_app_refactored.py file
+# FIX: Renamed import to cr_app_refactored to match file system
+import cr_app_refactored
+import run_rate_app_refactored
 
 # ==============================================================================
 # --- PAGE CONFIGURATION ---
@@ -180,6 +181,7 @@ if app_mode == "Combined Executive Report":
     )
     
     if not cr_results_df.empty and not cr_all_shots_df.empty:
+        # --- CRITICAL FIX: AGGREGATE BY RUN (Matches Original App) ---
         # The correct way to get totals that align with the CR waterfall is by summing the run summaries.
         run_summary_df = cr_utils.calculate_run_summaries(cr_all_shots_df, 100.0)
         
@@ -193,7 +195,7 @@ if app_mode == "Combined Executive Report":
             net_efficiency_loss_parts = loss_slow_parts - gain_fast_parts
             
             total_loss_parts = run_summary_df['Total Capacity Loss (parts)'].sum()
-            # This is the SUM of downtime seconds from the run calculation (the correct total time lost)
+            # The total downtime in seconds used for reporting (Loss in Machine Hours)
             total_loss_sec = run_summary_df['Capacity Loss (downtime) (sec)'].sum() 
             
             cr_perf = (total_actual / total_optimal) * 100 if total_optimal > 0 else 0
@@ -443,7 +445,7 @@ if app_mode == "Combined Executive Report":
 # --- MODULE 2 & 3: INDIVIDUAL APP LOADS ---
 # ==============================================================================
 elif app_mode == "Capacity Risk Details":
-    cr.run_capacity_risk_ui()
+    cr_app_refactored.run_capacity_risk_ui()
 
 elif app_mode == "Run Rate Analysis Details":
     run_rate_app_refactored.run_run_rate_ui()
