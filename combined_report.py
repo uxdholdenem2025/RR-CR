@@ -32,6 +32,32 @@ app_mode = st.sidebar.radio(
 st.sidebar.markdown("---")
 
 # ==============================================================================
+# --- HELPER: METRIC BADGE ---
+# ==============================================================================
+def metric_with_badge(label, value, badge_text, badge_color="green"):
+    """
+    Custom component to display a metric with a colored badge below it.
+    Colors: green (#77dd77), red (#ff6961), orange (#ffb347), gray (#d3d3d3)
+    """
+    color_map = {
+        "green": "#77dd77",
+        "red": "#ff6961",
+        "orange": "#ffb347",
+        "gray": "#d3d3d3"
+    }
+    bg_color = color_map.get(badge_color, "#d3d3d3")
+    
+    st.markdown(f"""
+    <div style="margin-bottom: 10px;">
+        <p style="font-size: 14px; margin-bottom: 0px; color: #888;">{label}</p>
+        <p style="font-size: 28px; font-weight: bold; margin-bottom: 5px;">{value}</p>
+        <span style="background-color: {bg_color}; color: #0E1117; padding: 3px 8px; border-radius: 10px; font-size: 12px; font-weight: bold;">
+            {badge_text}
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ==============================================================================
 # --- MODULE 1: COMBINED EXECUTIVE REPORT ---
 # ==============================================================================
 if app_mode == "Combined Executive Report":
@@ -126,14 +152,14 @@ if app_mode == "Combined Executive Report":
 
     st.divider()
 
-    # --- 3. Calculations & Master Table ---
+    # --- 3. Calculations & Data Prep ---
     
-    metrics_list = []
+    # Dictionaries to store display values
+    cr_metrics = {}
+    rr_metrics = {}
     
     # -- CR Calculation --
     if not cr_filtered.empty:
-        # We use the cached wrapper but pass our global settings
-        # default_cavities=2, target_output=100% (optimal view)
         cr_results_df, _ = cr_utils.run_capacity_calculation_cached_v2(
             cr_filtered, False, 2, 100.0, 
             global_ct_tolerance, global_stop_gap, global_run_interval
@@ -144,81 +170,133 @@ if app_mode == "Combined Executive Report":
             total_actual = cr_results_df['Actual Output (parts)'].sum()
             total_loss = cr_results_df['Total Capacity Loss (parts)'].sum()
             
-            metrics_list.append({"Category": "Capacity Risk", "Metric": "Optimal Output", "Value": f"{total_optimal:,.0f}", "Unit": "Parts"})
-            metrics_list.append({"Category": "Capacity Risk", "Metric": "Actual Output", "Value": f"{total_actual:,.0f}", "Unit": "Parts"})
-            metrics_list.append({"Category": "Capacity Risk", "Metric": "Total Capacity Loss", "Value": f"{total_loss:,.0f}", "Unit": "Parts"})
-            
-            # Determine color for CR
             cr_perf = (total_actual / total_optimal) * 100 if total_optimal > 0 else 0
-            metrics_list.append({"Category": "Capacity Risk", "Metric": "Performance vs Optimal", "Value": f"{cr_perf:.1f}", "Unit": "%"})
+            
+            cr_metrics = {
+                "optimal": total_optimal,
+                "actual": total_actual,
+                "loss": total_loss,
+                "perf": cr_perf
+            }
 
     # -- RR Calculation --
     if not rr_filtered.empty:
-        # Use the Calculator Class directly
         rr_calc = run_rate_utils.RunRateCalculator(
             rr_filtered, 
             global_ct_tolerance, 
             global_stop_gap, 
-            analysis_mode='aggregate' # Aggregate for executive view
+            analysis_mode='aggregate'
         )
         rr_res = rr_calc.results
         
-        metrics_list.append({"Category": "Run Rate", "Metric": "Stability Index", "Value": f"{rr_res.get('stability_index', 0):.1f}", "Unit": "%"})
-        metrics_list.append({"Category": "Run Rate", "Metric": "Efficiency", "Value": f"{rr_res.get('efficiency', 0)*100:.1f}", "Unit": "%"})
-        metrics_list.append({"Category": "Run Rate", "Metric": "MTTR", "Value": f"{rr_res.get('mttr_min', 0):.1f}", "Unit": "Min"})
-        metrics_list.append({"Category": "Run Rate", "Metric": "MTBF", "Value": f"{rr_res.get('mtbf_min', 0):.1f}", "Unit": "Min"})
-        metrics_list.append({"Category": "Run Rate", "Metric": "Total Stop Events", "Value": f"{rr_res.get('stop_events', 0):,}", "Unit": "Count"})
+        # Extract raw values for badges
+        rr_metrics = {
+            "mttr": rr_res.get('mttr_min', 0),
+            "mtbf": rr_res.get('mtbf_min', 0),
+            "stability": rr_res.get('stability_index', 0),
+            "efficiency": rr_res.get('efficiency', 0) * 100,
+            "production_time_sec": rr_res.get('production_time_sec', 0),
+            "downtime_sec": rr_res.get('downtime_sec', 0),
+            "total_runtime_sec": rr_res.get('total_runtime_sec', 0),
+            "normal_shots": rr_res.get('normal_shots', 0),
+            "total_shots": rr_res.get('total_shots', 0),
+            "stop_events": rr_res.get('stop_events', 0),
+            "stopped_shots": rr_res.get('total_shots', 0) - rr_res.get('normal_shots', 0)
+        }
 
-    # -- Display Master Table --
-    st.subheader("📊 Master Metrics Table")
-    if metrics_list:
-        df_master = pd.DataFrame(metrics_list)
-        
-        # Formatting for display
-        st.dataframe(
-            df_master.style.set_properties(**{'text-align': 'left'}).set_table_styles(
-                [{'selector': 'th', 'props': [('text-align', 'left')]}]
-            ),
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        # -- KPI Cards Row --
+    # --- 4. Display KPI Cards with Badges ---
+    
+    if cr_metrics or rr_metrics:
         st.subheader("Key Performance Indicators")
-        kpi_c1, kpi_c2, kpi_c3, kpi_c4 = st.columns(4)
         
-        # Extract values safely
-        def get_metric(name):
-            row = df_master[df_master['Metric'] == name]
-            return row.iloc[0]['Value'] if not row.empty else "N/A"
-
+        # Row 1: Time & Stability
+        kpi_c1, kpi_c2, kpi_c3, kpi_c4, kpi_c5 = st.columns(5)
+        
         with kpi_c1:
-            st.metric("Actual Output (CR)", get_metric("Actual Output"))
+            if "mttr" in rr_metrics:
+                val = run_rate_utils.format_minutes_to_dhm(rr_metrics["mttr"])
+                st.metric("Run Rate MTTR", val, help="Mean Time To Repair")
+            else:
+                st.metric("Run Rate MTTR", "N/A")
+
         with kpi_c2:
-            st.metric("Capacity Loss (CR)", get_metric("Total Capacity Loss"))
+            if "mtbf" in rr_metrics:
+                val = run_rate_utils.format_minutes_to_dhm(rr_metrics["mtbf"])
+                st.metric("Run Rate MTBF", val, help="Mean Time Between Failures")
+            else:
+                st.metric("Run Rate MTBF", "N/A")
+
         with kpi_c3:
-            st.metric("Stability Index (RR)", f"{get_metric('Stability Index')}%")
+            if "total_runtime_sec" in rr_metrics:
+                val = run_rate_utils.format_duration(rr_metrics["total_runtime_sec"])
+                st.metric("Total Run Duration", val)
+            else:
+                st.metric("Total Run Duration", "N/A")
+        
         with kpi_c4:
-            st.metric("MTBF (RR)", f"{get_metric('MTBF')} min")
+            if "production_time_sec" in rr_metrics:
+                val = run_rate_utils.format_duration(rr_metrics["production_time_sec"])
+                pct = (rr_metrics["production_time_sec"] / rr_metrics["total_runtime_sec"] * 100) if rr_metrics["total_runtime_sec"] > 0 else 0
+                metric_with_badge("Production Time", val, f"{pct:.1f}%", "green")
+            else:
+                st.metric("Production Time", "N/A")
+        
+        with kpi_c5:
+            if "downtime_sec" in rr_metrics:
+                val = run_rate_utils.format_duration(rr_metrics["downtime_sec"])
+                pct = (rr_metrics["downtime_sec"] / rr_metrics["total_runtime_sec"] * 100) if rr_metrics["total_runtime_sec"] > 0 else 0
+                metric_with_badge("Downtime", val, f"{pct:.1f}%", "red")
+            else:
+                st.metric("Downtime", "N/A")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Row 2: Output & Shots
+        kpi_r2_c1, kpi_r2_c2, kpi_r2_c3, kpi_r2_c4 = st.columns(4)
+        
+        with kpi_r2_c1:
+            if "actual" in cr_metrics:
+                metric_with_badge("Actual Output (CR)", f"{cr_metrics['actual']:,.0f}", f"{cr_metrics['perf']:.1f}% of Optimal", "green" if cr_metrics['perf'] > 80 else "orange")
+            else:
+                st.metric("Actual Output", "N/A")
+
+        with kpi_r2_c2:
+            if "total_shots" in rr_metrics:
+                st.metric("Total Shots", f"{rr_metrics['total_shots']:,}")
+            else:
+                st.metric("Total Shots", "N/A")
+
+        with kpi_r2_c3:
+            if "normal_shots" in rr_metrics:
+                pct = (rr_metrics["normal_shots"] / rr_metrics["total_shots"] * 100) if rr_metrics["total_shots"] > 0 else 0
+                metric_with_badge("Normal Shots", f"{rr_metrics['normal_shots']:,}", f"{pct:.1f}% of Total", "green")
+            else:
+                st.metric("Normal Shots", "N/A")
+
+        with kpi_r2_c4:
+            if "stop_events" in rr_metrics:
+                pct = (rr_metrics["stopped_shots"] / rr_metrics["total_shots"] * 100) if rr_metrics["total_shots"] > 0 else 0
+                metric_with_badge("Stop Events", f"{rr_metrics['stop_events']:,}", f"{pct:.1f}% Stopped Shots", "red")
+            else:
+                st.metric("Stop Events", "N/A")
 
     else:
         st.warning("No data available for the selected period.")
 
     st.divider()
 
-    # --- 4. Dashboard Graphs ---
+    # --- 5. Dashboard Graphs ---
     st.subheader("📈 Metric Dashboards")
     
     g1, g2 = st.columns(2)
     
     # Graph 1: Capacity Risk Waterfall (if data exists)
     with g1:
-        if not cr_filtered.empty and not cr_results_df.empty:
+        if "actual" in cr_metrics:
             st.markdown("#### Capacity Loss Breakdown")
-            
-            # Aggregating totals for the waterfall
-            tot_opt = cr_results_df['Optimal Output (parts)'].sum()
-            tot_act = cr_results_df['Actual Output (parts)'].sum()
+            tot_opt = cr_metrics['optimal']
+            tot_act = cr_metrics['actual']
+            # Re-fetch these details only if needed for chart, or assume processed above
             loss_downtime = cr_results_df['Capacity Loss (downtime) (parts)'].sum()
             loss_speed = cr_results_df['Capacity Loss (slow cycle time) (parts)'].sum() - cr_results_df['Capacity Gain (fast cycle time) (parts)'].sum()
             
@@ -239,9 +317,9 @@ if app_mode == "Combined Executive Report":
 
     # Graph 2: Run Rate Stability Gauge (if data exists)
     with g2:
-        if not rr_filtered.empty:
+        if "stability" in rr_metrics:
             st.markdown("#### Stability Performance")
-            stab_val = float(get_metric("Stability Index")) if get_metric("Stability Index") != "N/A" else 0
+            stab_val = rr_metrics["stability"]
             
             fig_gauge = go.Figure(go.Indicator(
                 mode="gauge+number",
