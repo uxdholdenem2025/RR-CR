@@ -5,10 +5,12 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, date
 
-# Import utils and refactored apps
+# Import utils
 import cr_utils
 import run_rate_utils
-import cr_app_refactored
+
+# Import the app files (based on your file system screenshot)
+import cr 
 import run_rate_app_refactored
 
 # ==============================================================================
@@ -34,9 +36,10 @@ st.sidebar.markdown("---")
 # ==============================================================================
 # --- HELPER: METRIC BADGE ---
 # ==============================================================================
-def metric_with_badge(label, value, badge_text, badge_color="green"):
+def metric_with_badge(label, value, badge_text, badge_color="green", help_text=None):
     """
     Custom component to display a metric with a colored badge below it.
+    Now supports a tooltip via the 'title' attribute.
     Colors: green (#77dd77), red (#ff6961), orange (#ffb347), gray (#d3d3d3)
     """
     color_map = {
@@ -47,8 +50,10 @@ def metric_with_badge(label, value, badge_text, badge_color="green"):
     }
     bg_color = color_map.get(badge_color, "#d3d3d3")
     
+    tooltip_html = f' title="{help_text}"' if help_text else ''
+    
     st.markdown(f"""
-    <div style="margin-bottom: 10px;">
+    <div style="margin-bottom: 10px;"{tooltip_html}>
         <p style="font-size: 14px; margin-bottom: 0px; color: #888;">{label}</p>
         <p style="font-size: 28px; font-weight: bold; margin-bottom: 5px;">{value}</p>
         <span style="background-color: {bg_color}; color: #0E1117; padding: 3px 8px; border-radius: 10px; font-size: 12px; font-weight: bold;">
@@ -71,7 +76,7 @@ if app_mode == "Combined Executive Report":
     with st.sidebar.expander("⚙️ Calculation Parameters", expanded=True):
         global_run_interval = st.slider(
             "Run Interval Threshold (Hours)", 1.0, 24.0, 8.0, 0.5,
-            help="Gaps longer than this define a new 'Production Run'. Applies to both CR and RR."
+            help="Gaps longer than this define a new 'Production Run'. Applies to both CR and RR logic where applicable."
         )
         global_stop_gap = st.slider(
             "Stop Threshold / Gap (Seconds)", 0.0, 10.0, 2.0, 0.5,
@@ -126,15 +131,16 @@ if app_mode == "Combined Executive Report":
         st.subheader("📅 Analysis Period")
         c1, c2 = st.columns([1, 3])
         with c1:
-            # Default to full range
+            # Default to full range if available
+            default_val = (min_global_date, max_global_date) if min_global_date and max_global_date else []
             date_range = st.date_input(
                 "Select Date Range",
-                value=(min_global_date, max_global_date),
+                value=default_val,
                 min_value=min_global_date,
                 max_value=max_global_date
             )
         
-        start_date, end_date = date_range if len(date_range) == 2 else (min_global_date, max_global_date)
+        start_date, end_date = date_range if isinstance(date_range, tuple) and len(date_range) == 2 else (min_global_date, max_global_date)
         
         # Filter Data
         cr_filtered = pd.DataFrame()
@@ -159,6 +165,7 @@ if app_mode == "Combined Executive Report":
     rr_metrics = {}
     
     # -- CR Calculation --
+    cr_results_df = pd.DataFrame()
     if not cr_filtered.empty:
         cr_results_df, _ = cr_utils.run_capacity_calculation_cached_v2(
             cr_filtered, False, 2, 100.0, 
@@ -215,21 +222,21 @@ if app_mode == "Combined Executive Report":
         with kpi_c1:
             if "mttr" in rr_metrics:
                 val = run_rate_utils.format_minutes_to_dhm(rr_metrics["mttr"])
-                st.metric("Run Rate MTTR", val, help="Mean Time To Repair")
+                st.metric("Run Rate MTTR", val, help="Mean Time To Repair: Average duration of a single stop event.")
             else:
                 st.metric("Run Rate MTTR", "N/A")
 
         with kpi_c2:
             if "mtbf" in rr_metrics:
                 val = run_rate_utils.format_minutes_to_dhm(rr_metrics["mtbf"])
-                st.metric("Run Rate MTBF", val, help="Mean Time Between Failures")
+                st.metric("Run Rate MTBF", val, help="Mean Time Between Failures: Average uptime between stop events.")
             else:
                 st.metric("Run Rate MTBF", "N/A")
 
         with kpi_c3:
             if "total_runtime_sec" in rr_metrics:
                 val = run_rate_utils.format_duration(rr_metrics["total_runtime_sec"])
-                st.metric("Total Run Duration", val)
+                st.metric("Total Run Duration", val, help="Total wall-clock time from first to last shot.")
             else:
                 st.metric("Total Run Duration", "N/A")
         
@@ -237,7 +244,7 @@ if app_mode == "Combined Executive Report":
             if "production_time_sec" in rr_metrics:
                 val = run_rate_utils.format_duration(rr_metrics["production_time_sec"])
                 pct = (rr_metrics["production_time_sec"] / rr_metrics["total_runtime_sec"] * 100) if rr_metrics["total_runtime_sec"] > 0 else 0
-                metric_with_badge("Production Time", val, f"{pct:.1f}%", "green")
+                metric_with_badge("Production Time", val, f"{pct:.1f}%", "green", help_text="Total time spent producing parts.")
             else:
                 st.metric("Production Time", "N/A")
         
@@ -245,7 +252,7 @@ if app_mode == "Combined Executive Report":
             if "downtime_sec" in rr_metrics:
                 val = run_rate_utils.format_duration(rr_metrics["downtime_sec"])
                 pct = (rr_metrics["downtime_sec"] / rr_metrics["total_runtime_sec"] * 100) if rr_metrics["total_runtime_sec"] > 0 else 0
-                metric_with_badge("Downtime", val, f"{pct:.1f}%", "red")
+                metric_with_badge("Downtime", val, f"{pct:.1f}%", "red", help_text="Total time the machine was stopped.")
             else:
                 st.metric("Downtime", "N/A")
         
@@ -256,27 +263,27 @@ if app_mode == "Combined Executive Report":
         
         with kpi_r2_c1:
             if "actual" in cr_metrics:
-                metric_with_badge("Actual Output (CR)", f"{cr_metrics['actual']:,.0f}", f"{cr_metrics['perf']:.1f}% of Optimal", "green" if cr_metrics['perf'] > 80 else "orange")
+                metric_with_badge("Actual Output (CR)", f"{cr_metrics['actual']:,.0f}", f"{cr_metrics['perf']:.1f}% of Optimal", "green" if cr_metrics['perf'] > 80 else "orange", help_text="Total parts produced vs Optimal (100%) Output.")
             else:
                 st.metric("Actual Output", "N/A")
 
         with kpi_r2_c2:
             if "total_shots" in rr_metrics:
-                st.metric("Total Shots", f"{rr_metrics['total_shots']:,}")
+                st.metric("Total Shots", f"{rr_metrics['total_shots']:,}", help="Total number of machine cycles.")
             else:
                 st.metric("Total Shots", "N/A")
 
         with kpi_r2_c3:
             if "normal_shots" in rr_metrics:
                 pct = (rr_metrics["normal_shots"] / rr_metrics["total_shots"] * 100) if rr_metrics["total_shots"] > 0 else 0
-                metric_with_badge("Normal Shots", f"{rr_metrics['normal_shots']:,}", f"{pct:.1f}% of Total", "green")
+                metric_with_badge("Normal Shots", f"{rr_metrics['normal_shots']:,}", f"{pct:.1f}% of Total", "green", help_text="Shots within cycle time tolerance.")
             else:
                 st.metric("Normal Shots", "N/A")
 
         with kpi_r2_c4:
             if "stop_events" in rr_metrics:
                 pct = (rr_metrics["stopped_shots"] / rr_metrics["total_shots"] * 100) if rr_metrics["total_shots"] > 0 else 0
-                metric_with_badge("Stop Events", f"{rr_metrics['stop_events']:,}", f"{pct:.1f}% Stopped Shots", "red")
+                metric_with_badge("Stop Events", f"{rr_metrics['stop_events']:,}", f"{pct:.1f}% Stopped Shots", "red", help_text="Number of times the machine stopped.")
             else:
                 st.metric("Stop Events", "N/A")
 
@@ -344,7 +351,7 @@ if app_mode == "Combined Executive Report":
 # --- MODULE 2 & 3: INDIVIDUAL APP LOADS ---
 # ==============================================================================
 elif app_mode == "Capacity Risk Details":
-    cr_app_refactored.run_capacity_risk_ui()
+    cr.run_capacity_risk_ui()
 
 elif app_mode == "Run Rate Analysis Details":
     run_rate_app_refactored.run_run_rate_ui()
