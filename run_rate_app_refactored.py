@@ -297,11 +297,9 @@ def render_dashboard(df_tool, tool_id_selection):
         with st.container(border=True):
             col1, col2, col3, col4, col5 = st.columns(5)
             total_d = summary_metrics.get('total_runtime_sec', 0); prod_t = summary_metrics.get('production_time_sec', 0); down_t = summary_metrics.get('downtime_sec', 0)
-            prod_p = (prod_t / total_d * 100) if total_d > 0 else 0
-            down_p = (down_t / total_d * 100) if total_d > 0 else 0
+            prod_p = (prod_t / total_d * 100) if total_d > 0 else 0; down_p = (down_t / total_d * 100) if total_d > 0 else 0
             
-            mttr_val_min = summary_metrics.get('mttr_min', 0)
-            mtbf_val_min = summary_metrics.get('mtbf_min', 0)
+            mttr_val_min = summary_metrics.get('mttr_min', 0); mtbf_val_min = summary_metrics.get('mtbf_min', 0)
             
             # Call logic function
             mttr_display = rr_utils.format_minutes_to_dhm(mttr_val_min)
@@ -676,11 +674,10 @@ def render_dashboard(df_tool, tool_id_selection):
                     st.plotly_chart(fig_b, use_container_width=True)
                     with st.expander("View Bucket Data", expanded=False): 
                         df_bucket_data = complete_runs.copy()
-                        cols_to_show = ['run_group', 'duration_min', 'time_bucket', 'run_end_time', 'run_label']
+                        cols_to_show = ['run_group', 'duration_min', 'time_bucket', 'run_end_time']
                         df_bucket_data = df_bucket_data[[col for col in cols_to_show if col in df_bucket_data.columns]].rename(columns={
                             'run_group': 'Run Group', 'duration_min': 'Duration (min)',
-                            'time_bucket': 'Time Bucket', 'run_end_time': 'Run End Date/ Time',
-                            'run_label': 'Run ID'
+                            'time_bucket': 'Time Bucket', 'run_end_time': 'Run End Date/ Time'
                         })
                         st.dataframe(df_bucket_data)
                 else: st.info("No complete runs.")
@@ -730,7 +727,6 @@ def render_dashboard(df_tool, tool_id_selection):
 
 # ==============================================================================
 # --- 8. MAIN APP LOGIC (FILE UPLOAD & TAB RENDERING) ---
-# --- This is the main function that will be called by the combined app ---
 # ==============================================================================
 
 def run_run_rate_ui():
@@ -770,39 +766,18 @@ def run_run_rate_ui():
         key="rr_tool_select" # Add a unique key
     )
 
-    if dashboard_tool_id_selection == "All Tools (Risk Tower)":
-        if len(tool_ids) > 1:
-            first_tool = tool_ids[1]
-            df_for_dashboard = df_all_tools[df_all_tools[id_col] == first_tool]
-            tool_id_for_dashboard_display = first_tool
-        else:
-            df_for_dashboard = pd.DataFrame()
-            tool_id_for_dashboard_display = "No Tool Selected"
-    else:
-        df_for_dashboard = df_all_tools[df_all_tools[id_col] == dashboard_tool_id_selection]
-        tool_id_for_dashboard_display = dashboard_tool_id_selection
-
-    # --- Tab Rendering ---
-    tab1, tab2 = st.tabs(["Risk Tower", "Run Rate Dashboard"])
-
-    with tab1:
-        render_risk_tower(df_all_tools)
-
-    with tab2:
-        if not df_for_dashboard.empty:
-            render_dashboard(df_for_dashboard, tool_id_for_dashboard_display)
-        else:
-            st.info("Select a specific Tool ID from the sidebar to view its dashboard.")
-
-# --- Add this block at the very end ---
-# This allows the file to be run standalone for testing
-if __name__ == "__main__":
-    # --- Page Config (Copied from combined_report.py) ---
-    st.set_page_config(
-        page_title="Run Rate Analysis (Standalone)",
-        layout="wide"
-    )
-    warnings.filterwarnings("ignore", category=FutureWarning)
+    if dashboard_tool_id_selection == "All Tools (Risk Tower)\
     
-    # This is the main function we defined above
-    run_run_rate_ui()
+    # ... rest of the code ...
+    
+    # This allows the file to be run standalone for testing
+    if __name__ == "__main__":
+        # --- Page Config (Copied from combined_report.py) ---
+        st.set_page_config(
+            page_title="Run Rate Analysis (Standalone)",
+            layout="wide"
+        )
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        
+        # This is the main function we defined above
+        run_run_rate_ui()
