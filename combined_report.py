@@ -218,8 +218,11 @@ if app_mode == "Combined Executive Report":
     if global_exclude_maintenance:
         rr_input_filtered = rr_input_filtered[~rr_input_filtered['Plant Area'].isin(['Maintenance', 'Warehouse'])].copy()
 
-    # The RR calculator expects 'shot_time' and 'ACTUAL CT'
+    # The RR calculator expects 'shot_time' and 'ACTUAL CT'. 
+    # We must explicitly map them because the CR utils standardize the names using the full version of the data, 
+    # but the RR logic uses its own prepare_data() function that expects certain column names.
     if 'SHOT TIME' in rr_input_filtered.columns and 'Actual CT' in rr_input_filtered.columns:
+        # FIX: The RR calculator expects 'ACTUAL CT' (uppercase) and 'shot_time' (lowercase)
         rr_input_filtered.rename(columns={'SHOT TIME': 'shot_time', 'Actual CT': 'ACTUAL CT'}, inplace=True)
         
         rr_calc = run_rate_utils.RunRateCalculator(
@@ -249,7 +252,7 @@ if app_mode == "Combined Executive Report":
     if not cavities_found:
         st.warning("⚠️ 'Working Cavities' column not found. Used global default. Capacity (parts) metrics may be inaccurate if cavities vary per run.")
     
-    # Data Preparation for Display
+    # Data Preparation
     if cr_metrics:
         row_opp_lost = f"{cr_metrics['loss_total_parts']:,.0f} parts"
         loss_hours = cr_metrics['loss_total_sec'] / 3600.0
@@ -267,6 +270,7 @@ if app_mode == "Combined Executive Report":
         val_avail = f"-{avail_loss_abs:,.0f} parts"
         val_eff = f"-{eff_loss_abs:,.0f} parts"
         
+        # CRITICAL FIX: Use the CR utility function for downtime time
         downtime_time_formatted = cr_utils.format_seconds_to_dhm(cr_metrics['loss_total_sec'])
     else:
         row_opp_lost = "N/A"
