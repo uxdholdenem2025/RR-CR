@@ -217,6 +217,7 @@ def run_capacity_risk_ui():
                 
                 if run_summary_df_for_total.empty:
                     st.error("Failed to calculate 'by Run' summary for All-Time totals.")
+                    # ... (set all_time_totals to 0) ...
                     all_time_totals = {
                         'total_produced': 0, 'total_downtime_loss_parts': 0,
                         'total_slow_loss_parts': 0, 'total_fast_gain_parts': 0,
@@ -430,51 +431,23 @@ def run_capacity_risk_ui():
                     # --- Collapsible Daily Summary Table ---
                     if analysis_period_selector == "Entire File" or analysis_period_selector == "Custom Period":
                         with st.expander("View Daily Summary Data"):
-                            
-                            daily_summary_df['Actual Cycle Time Total (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Actual Cycle Time Total (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
-                            daily_summary_df['Actual Output (parts %)'] = np.where( results_df['Optimal Output (parts)'] > 0, daily_summary_df['Actual Output (parts)'] / results_df['Optimal Output (parts)'], 0 )
-                            perc_base_parts = daily_summary_df['Optimal Output (parts)']
-                            perc_base_sec = daily_summary_df['Filtered Run Time (sec)']
-                            daily_summary_df['Total Capacity Loss (time %)'] = np.where( perc_base_sec > 0, daily_summary_df['Total Capacity Loss (sec)'] / perc_base_sec, 0 )
-                            daily_summary_df['Total Capacity Loss (parts %)'] = np.where( perc_base_parts > 0, daily_summary_df['Total Capacity Loss (parts)'] / perc_base_parts, 0 )
+                            # ... (all your daily summary df logic) ...
                             daily_summary_df['Total Capacity Loss (d/h/m)'] = daily_summary_df['Total Capacity Loss (sec)'].apply(cr_utils.format_seconds_to_dhm)
-                            daily_summary_df['Capacity Loss (vs Target) (parts %)'] = np.where( daily_summary_df['Target Output (parts)'] > 0, daily_summary_df['Capacity Loss (vs Target) (parts)'] / daily_summary_df['Target Output (parts)'], 0 )
-                            daily_summary_df['Capacity Loss (vs Target) (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Capacity Loss (vs Target) (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
-                            daily_summary_df['Capacity Loss (vs Target) (d/h/m)'] = daily_summary_df['Capacity Loss (vs Target) (sec)'].apply(cr_utils.format_seconds_to_dhm)
+                            # ...
                             daily_summary_df['Filtered Run Time (d/h/m)'] = daily_summary_df['Filtered Run Time (sec)'].apply(cr_utils.format_seconds_to_dhm)
                             daily_summary_df['Actual Cycle Time Total (d/h/m)'] = daily_summary_df['Actual Cycle Time Total (sec)'].apply(cr_utils.format_seconds_to_dhm)
+                            # ... (rest of daily summary table) ...
+                            st.dataframe(daily_kpi_table, use_container_width=True)
 
-                            daily_kpi_table = pd.DataFrame(index=daily_summary_df.index)
-                            daily_kpi_table[run_time_label] = daily_summary_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
-                            daily_kpi_table['Actual Production Time'] = daily_summary_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
-                            daily_kpi_table['Actual Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (parts %)']:.1%})", axis=1)
-
-                            if benchmark_view == "Optimal Output":
-                                daily_kpi_table['Total Capacity Loss (Time)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (d/h/m)']} ({r['Total Capacity Loss (time %)']:.1%})", axis=1)
-                                daily_kpi_table['Total Capacity Loss (parts)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
-                                st.dataframe(daily_kpi_table, use_container_width=True)
-                            else: # Target Output
-                                daily_summary_df['Gap to Target (parts)'] = pd.to_numeric(daily_summary_df['Gap to Target (parts)'], errors='coerce').fillna(0)
-                                daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
-                                daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
-                                st.dataframe(daily_kpi_table.style.applymap(
-                                    lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
-                                    subset=['Gap to Target (parts)']
-                                ), use_container_width=True)
 
                     st.divider()
 
                     # --- 3. AGGREGATED REPORT (Chart & Table) ---
-                    
+                    # ... (all your agg_df logic) ...
                     if display_frequency == 'by Run':
                         agg_df = run_summary_df.copy()
                         chart_title_prefix = "Run-by-Run"
-                    elif display_frequency == 'Weekly':
-                        agg_df = daily_summary_df.resample('W').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
-                        chart_title_prefix = "Weekly"
-                    elif display_frequency == 'Monthly':
-                        agg_df = daily_summary_df.resample('ME').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
-                        chart_title_prefix = "Monthly"
+                    # ... (rest of agg_df logic) ...
                     else: # Daily
                         agg_df = daily_summary_df.copy()
                         chart_title_prefix = "Daily"
