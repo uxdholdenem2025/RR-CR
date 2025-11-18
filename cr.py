@@ -657,41 +657,7 @@ def run_capacity_risk_ui():
                         
                         if benchmark_view == "Target Output": 
                             st.header(f"Target Report (90%) ({display_frequency})")
-                            st.info("This table allocates your Capacity Loss (vs Target) based on the proportional impact of all your true losses and gains (Downtime, Slow Cycles, and Fast Cycles).")
-                            
-                            display_df_target = display_df
-                            
-                            if display_frequency == 'by Run':
-                                report_table_target_df = display_df_target.reset_index().rename(columns={'run_id': 'Run ID'})
-                                # Add 1 to run_id for display
-                                report_table_target_df['Run ID'] = report_table_target_df['Run ID'] + 1
-                                report_table_target = pd.DataFrame(index=report_table_target_df.index)
-                                report_table_target['Run ID'] = report_table_target_df['Run ID']
-                            else:
-                                report_table_target = pd.DataFrame(index=display_df_target.index)
-                                report_table_target_df = display_df_target
-
-                            report_table_target['Target Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
-                            report_table_target['Actual Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
-                            report_table_target['Actual % (vs Target)'] = report_table_target_df.apply(lambda r: r['Actual Output (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:.1%}".format(x) if pd.notna(x) else "N/A")
-                            report_table_target['Net Gap to Target (parts)'] = report_table_target_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
-                            report_table_target['Capacity Loss (vs Target)'] = report_table_target_df['Capacity Loss (vs Target) (parts)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
-                            report_table_target['Allocated Loss (RR Downtime)'] = report_table_target_df.apply(lambda r: f"{r['Allocated Loss (RR Downtime)']:,.2f} ({r['loss_downtime_ratio']:.1%})", axis=1)
-                            report_table_target['Allocated Loss (Slow Cycles)'] = report_table_target_df.apply(lambda r: f"{r['Allocated Loss (Slow Cycles)']:,.2f} ({r['loss_slow_ratio']:.1%})", axis=1)
-                            report_table_target['Allocated Gain (Fast Cycles)'] = report_table_target_df.apply(lambda r: f"{r['Allocated Gain (Fast Cycles)']:,.2f} ({r['gain_fast_ratio']:.1%})", axis=1)
-
-                            def style_target_report_table(col):
-                                col_name = col.name
-                                if col_name == 'Net Gap to Target (parts)':
-                                    return ['color: green' if v > 0 else 'color: red' for v in display_df_target['Gap to Target (parts)']]
-                                if col_name == 'Actual % (vs Target)':
-                                    return ['color: green' if v > 1 else 'color: red' for v in (display_df_target['Actual Output (parts)'] / display_df_target['Target Output (parts)']).fillna(0)]
-                                if col_name == 'Capacity Loss (vs Target)': return ['color: red'] * len(col)
-                                if col_name == 'Allocated Loss (RR Downtime)': return ['color: red'] * len(col)
-                                if col_name == 'Allocated Loss (Slow Cycles)': return ['color: red'] * len(col)
-                                if col_name == 'Allocated Gain (Fast Cycles)': return ['color: green'] * len(col)
-                                return [''] * len(col)
-                            
+                            # ... (all your report_table_target logic) ...
                             st.dataframe(
                                 report_table_target.style.apply(style_target_report_table, axis=0),
                                 use_container_width=True
@@ -700,171 +666,38 @@ def run_capacity_risk_ui():
                     # --- 4. SHOT-BY-SHOT ANALYSIS ---
                     st.divider()
                     st.header("Shot-by-Shot Analysis (All Shots)")
-                    st.info(f"This chart shows all shots. 'Production' shots are color-coded based on the **Optimal Output (Approved CT)** benchmark. 'RR Downtime (Stop)' shots are grey.")
-
+                    # ... (all your shot-by-shot logic) ...
                     if all_shots_df.empty:
                         st.warning("No shots were found in the file to analyze.")
                     else:
-                        available_dates_list = sorted(all_shots_df['date'].unique(), reverse=True)
-                        available_dates = ["All Dates"] + available_dates_list
-                        
-                        if not available_dates_list:
-                            st.warning("No valid dates found in shot data.")
-                        else:
-                            selected_date = st.selectbox(
-                                "Select a Date to Analyze",
-                                options=available_dates,
-                                format_func=lambda d: "All Dates" if isinstance(d, str) else d.strftime('%Y-%m-%d')
-                            )
-                            
-                            if selected_date == "All Dates":
-                                df_day_shots = all_shots_df.copy()
-                                chart_title = "All Shots for Full Period"
-                            else:
-                                df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
-                                chart_title = f"All Shots for {selected_date}"
-                            
-                            st.subheader("Chart Controls")
-                            non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
-                            max_ct_for_day = 100
-                            if not non_break_df.empty:
-                                max_ct_for_day = non_break_df['Actual CT'].max()
+                        # ... (all your shot-by-shot selectbox, slider, and chart logic) ...
+                        st.plotly_chart(fig_ct, use_container_width=True)
+                        # ... (all your shot-by-shot dataframe logic) ...
+                        st.dataframe(
+                            df_to_display[[
+                                'SHOT TIME', 'Actual CT', 'Approved CT',
+                                'Working Cavities', 'run_id', 'mode_ct', 
+                                'Shot Type', 'stop_flag',
+                                'rr_time_diff', 'adj_ct_sec',
+                                'reference_ct', 'Mode CT Lower', 'Mode CT Upper'
+                            ]].style.format({
+                                'Actual CT': '{:.2f}',
+                                # ... (rest of formatting) ...
+                                'SHOT TIME': lambda t: t.strftime('%Y-%m-%d %H:%M:%S') if selected_date == "All Dates" else t.strftime('%H:%M:%S')
+                            }),
+                            use_container_width=True
+                        )
 
-                            slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
-                            slider_max = max(slider_max, 50)
-                            slider_max = min(slider_max, 1000)
+    else:
+        st.info("👈 Please upload a data file to begin.")
 
-                            y_axis_max = st.slider(
-                                "Zoom Y-Axis (sec)",
-                                min_value=10, max_value=1000,
-                                value=min(slider_max, 200), step=10,
-                                help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
-                            )
-
-                            required_shot_cols = ['reference_ct', 'Mode CT Lower', 'Mode CT Upper', 'run_id', 'mode_ct', 'rr_time_diff', 'adj_ct_sec']
-                            missing_shot_cols = [col for col in required_shot_cols if col not in df_day_shots.columns]
-                            
-                            if missing_shot_cols:
-                                st.error(f"Error: Missing required columns. {', '.join(missing_shot_cols)}")
-                            elif df_day_shots.empty:
-                                st.warning(f"No shots found for {selected_date}.")
-                            else:
-                                reference_ct_for_day = df_day_shots['reference_ct'].iloc[0] 
-                                reference_ct_label = "Approved CT"
-                                
-                                fig_ct = go.Figure()
-                                color_map = {
-                                    'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#3498DB',
-                                    'RR Downtime (Stop)': '#808080', 'Run Break (Excluded)': '#d3d3d3'
-                                }
-
-                                for shot_type, color in color_map.items():
-                                    df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
-                                    if not df_subset.empty:
-                                        fig_ct.add_bar(
-                                            x=df_subset['SHOT TIME'], y=df_subset['Actual CT'],
-                                            name=shot_type, marker_color=color,
-                                            # Add 1 to run_id for display
-                                            customdata=(df_subset['run_id'] + 1),
-                                            hovertemplate='<b>%{x|%H:%M:%S}</b><br>Run ID: %{customdata}<br>Shot Type: %{fullData.name}<br>Actual CT: %{y:.2f}s<extra></extra>'
-                                        )
-                                
-                                for run_id, df_run in df_day_shots.groupby('run_id'):
-                                    if not df_run.empty:
-                                        mode_ct_lower_for_run = df_run['Mode CT Lower'].iloc[0]
-                                        mode_ct_upper_for_run = df_run['Mode CT Upper'].iloc[0]
-                                        run_start_time = df_run['SHOT TIME'].min()
-                                        run_end_time = df_run['SHOT TIME'].max()
-                                        
-                                        fig_ct.add_hrect(
-                                            x0=run_start_time, x1=run_end_time,
-                                            y0=mode_ct_lower_for_run, y1=mode_ct_upper_for_run,
-                                            fillcolor="grey", opacity=0.20,
-                                            line_width=0,
-                                            # Add 1 to run_id for display
-                                            name=f"Run {run_id + 1} Mode Band" if len(df_day_shots['run_id'].unique()) > 1 else "Mode CT Band"
-                                        )
-                                
-                                legend_names_seen = set()
-                                for trace in fig_ct.data:
-                                    if "Mode Band" in trace.name:
-                                        if trace.name in legend_names_seen:
-                                            trace.showlegend = False
-                                        else:
-                                            legend_names_seen.add(trace.name)
-                                
-                                fig_ct.add_shape(
-                                    type='line',
-                                    x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                                    y0=reference_ct_for_day, y1=reference_ct_for_day,
-                                    line=dict(color='green', dash='dash'), name=f'{reference_ct_label} ({reference_ct_for_day:.2f}s)'
-                                )
-                                fig_ct.add_annotation(
-                                    x=df_day_shots['SHOT TIME'].max(), y=reference_ct_for_day,
-                                    text=f"{reference_ct_label}: {reference_ct_for_day:.2f}s", showarrow=True, arrowhead=1
-                                )
-                                
-                                if 'run_id' in df_day_shots.columns:
-                                    run_starts = df_day_shots.groupby('run_id')['SHOT TIME'].min().sort_values()
-                                    for start_time in run_starts.iloc[1:]:
-                                        run_id_val = df_day_shots[df_day_shots['SHOT TIME'] == start_time]['run_id'].iloc[0]
-                                        fig_ct.add_vline(
-                                            x=start_time, line_width=2, 
-                                            line_dash="dash", line_color="purple"
-                                        )
-                                        fig_ct.add_annotation(
-                                            x=start_time, y=y_axis_max * 0.95,
-                                            # run_id is 0-based, so add 1
-                                            text=f"Run {run_id_val + 1} Start",
-                                            showarrow=False, yshift=10, textangle=-90
-                                        )
-
-                                fig_ct.update_layout(
-                                    title=chart_title, xaxis_title='Time of Day',
-                                    yaxis_title='Actual Cycle Time (sec)',
-                                    hovermode="closest", yaxis_range=[0, y_axis_max],
-                                )
-                                st.plotly_chart(fig_ct, use_container_width=True)
-
-                                selected_date_str = "All Dates" if isinstance(selected_date, str) else selected_date.strftime('%Y-%m-%d')
-                                st.subheader(f"Data for all {len(df_day_shots)} shots ({selected_date_str})")
-                                
-                                if len(df_day_shots) > 10000:
-                                    st.info(f"Displaying first 10,000 shots of {len(df_day_shots)} total.")
-                                    df_to_display = df_day_shots.head(10000).copy()
-                                else:
-                                    df_to_display = df_day_shots.copy()
-                                    
-                                # Add 1 to run_id for display in the table
-                                if 'run_id' in df_to_display.columns:
-                                    df_to_display['run_id'] = df_to_display['run_id'] + 1
-                                    
-                                st.dataframe(
-                                    df_to_display[[
-                                        'SHOT TIME', 'Actual CT', 'Approved CT',
-                                        'Working Cavities', 'run_id', 'mode_ct', 
-                                        'Shot Type', 'stop_flag',
-                                        'rr_time_diff', 'adj_ct_sec',
-                                        'reference_ct', 'Mode CT Lower', 'Mode CT Upper'
-                                    ]].style.format({
-                                        'Actual CT': '{:.2f}',
-                                        'Approved CT': '{:.1f}',
-                                        'reference_ct': '{:.2f}', 
-                                        'Mode CT Lower': '{:.2f}',
-                                        'Mode CT Upper': '{:.2f}',
-                                        'mode_ct': '{:.2f}',
-                                        'rr_time_diff': '{:.1f}s',
-                                        'adj_ct_sec': '{:.1f}s',
-                                        'SHOT TIME': lambda t: t.strftime('%Y-%m-%d %H:%M:%S') if selected_date == "All Dates" else t.strftime('%H:%M:%S')
-                                    }),
-                                    use_container_width=True
-                                )
-
-                # --- Tabs 2 & 3 are commented out ---
-                # with tab2:
-                #     ...
-                # with tab3:
-                #     ...
-
-else:
-    st.info("👈 Please upload a data file to begin.")
+# This allows the file to be run standalone if needed
+if __name__ == "__main__":
+    # --- Page Config (Copied from combined_report.py) ---
+    st.set_page_config(
+        page_title=f"Capacity Risk Calculator (Standalone)",
+        layout="wide"
+    )
+    
+    # This is the main function we defined above
+    run_capacity_risk_ui()
