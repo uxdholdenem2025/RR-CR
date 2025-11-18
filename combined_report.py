@@ -8,7 +8,7 @@ from datetime import datetime, date
 # Import utils and refactored apps
 import cr_utils
 import run_rate_utils
-import cr  # This imports your cr.py file
+import cr  # This imports your refactored cr.py file
 import run_rate_app_refactored # This imports your run_rate_app_refactored.py file
 
 # ==============================================================================
@@ -32,6 +32,33 @@ app_mode = st.sidebar.radio(
 st.sidebar.markdown("---")
 
 # ==============================================================================
+# --- HELPER: METRIC BADGE ---
+# ==============================================================================
+def metric_with_badge(label, value, badge_text, badge_color="green", help_text=None):
+    """
+    Custom component to display a metric with a colored badge below it.
+    """
+    color_map = {
+        "green": "#77dd77",
+        "red": "#ff6961",
+        "orange": "#ffb347",
+        "gray": "#d3d3d3"
+    }
+    bg_color = color_map.get(badge_color, "#d3d3d3")
+    
+    tooltip_html = f' title="{help_text}"' if help_text else ''
+    
+    st.markdown(f"""
+    <div style="margin-bottom: 10px;"{tooltip_html}>
+        <p style="font-size: 14px; margin-bottom: 0px; color: #888;">{label}</p>
+        <p style="font-size: 28px; font-weight: bold; margin-bottom: 5px;">{value}</p>
+        <span style="background-color: {bg_color}; color: #0E1117; padding: 3px 8px; border-radius: 10px; font-size: 12px; font-weight: bold;">
+            {badge_text}
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ==============================================================================
 # --- MODULE 1: COMBINED EXECUTIVE REPORT ---
 # ==============================================================================
 if app_mode == "Combined Executive Report":
@@ -51,6 +78,7 @@ if app_mode == "Combined Executive Report":
             "Stop Threshold / Gap (Seconds)", 0.0, 10.0, 2.0, 0.5,
             help="Idle time required to trigger a stop event."
         )
+        # Default set to 0.05 (5%) to match cr.py defaults for maximum consistency
         global_ct_tolerance = st.slider(
             "Cycle Time Tolerance (%)", 0.01, 0.50, 0.05, 0.01,
             help="Variation allowed around Mode CT before flagging as abnormal."
@@ -65,7 +93,7 @@ if app_mode == "Combined Executive Report":
         )
 
     # Cost Settings
-    with st.sidebar.expander("💰 Cost Settings", expanded=True):
+    with st.sidebar.expander("💰 Cost Settings", expanded=False):
         machine_rate = st.number_input("Machine Rate ($/h)", value=170.0, step=10.0)
         labor_rate = st.number_input("Labor Cost ($/h)", value=10.0, step=5.0)
 
@@ -160,7 +188,8 @@ if app_mode == "Combined Executive Report":
             net_efficiency_loss_parts = loss_slow_parts - gain_fast_parts
             
             total_loss_parts = run_summary_df['Total Capacity Loss (parts)'].sum()
-            total_loss_sec = run_summary_df['Total Capacity Loss (sec)'].sum()
+            # The total downtime in seconds used for reporting (Loss in Machine Hours)
+            total_loss_sec = run_summary_df['Capacity Loss (downtime) (sec)'].sum() 
             
             cr_perf = (total_actual / total_optimal) * 100 if total_optimal > 0 else 0
             
@@ -168,7 +197,7 @@ if app_mode == "Combined Executive Report":
                 "optimal": total_optimal,
                 "actual": total_actual,
                 "loss_total_parts": total_loss_parts,
-                "loss_total_sec": total_loss_sec,
+                "loss_total_sec": total_loss_sec, # This is the key Downtime Time
                 "loss_availability_parts": loss_downtime_parts,
                 "loss_efficiency_parts": net_efficiency_loss_parts,
                 "perf": cr_perf
@@ -190,6 +219,8 @@ if app_mode == "Combined Executive Report":
         "mtbf": rr_res.get('mtbf_min', 0),
         "stability": rr_res.get('stability_index', 0),
         "efficiency": rr_res.get('efficiency', 0) * 100,
+        "total_shots": rr_res.get('total_shots', 0),
+        "stop_events": rr_res.get('stop_events', 0)
     }
 
     # --- 4. INSIGHT TABLES ---
@@ -204,14 +235,19 @@ if app_mode == "Combined Executive Report":
         row_opp_lost = f"{cr_metrics['loss_total_parts']:,.0f} parts"
         loss_hours = cr_metrics['loss_total_sec'] / 3600.0
         total_cost = loss_hours * (machine_rate + labor_rate)
+        
+        # Calculate badge color/text for Availability/Efficiency Loss
+        avail_loss_abs = abs(cr_metrics['loss_availability_parts'])
+        eff_loss_abs = abs(cr_metrics['loss_efficiency_parts'])
+        
+        # Format for table display
         row_loss_hrs = f"{loss_hours:,.1f} Hours"
         row_cost = f"${total_cost:,.0f} *"
-        
         val_opt = f"{cr_metrics['optimal']:,.0f} parts"
         gap_total = cr_metrics['actual'] - cr_metrics['optimal']
         val_act = f"{cr_metrics['actual']:,.0f} ({gap_total:+,.0f} parts)"
-        val_avail = f"-{cr_metrics['loss_availability_parts']:,.0f} parts"
-        val_eff = f"-{cr_metrics['loss_efficiency_parts']:,.0f} parts"
+        val_avail = f"-{avail_loss_abs:,.0f} parts"
+        val_eff = f"-{eff_loss_abs:,.0f} parts"
     else:
         row_opp_lost = "N/A"
         row_loss_hrs = "N/A"
@@ -233,12 +269,12 @@ if app_mode == "Combined Executive Report":
                 f"Total Incurred Costs (Machine Rate + Labor)*",
                 "Parts Opportunity Lost",
                 "Run Rate Efficiency",
-                "Run Rate MTBF",
-                "Run Rate MTTR",
+                "Run Rate MTBF (Mean Time Between Failure)",
+                "Run Rate MTTR (Mean Time To Repair)",
                 "Capacity Risk: Optimal Output (100% OEE)",
                 "Capacity Risk: Actual Output",
-                "Capacity Risk: Availability Loss",
-                "Capacity Risk: Efficiency Loss"
+                "Capacity Risk: Availability Loss (-parts)",
+                "Capacity Risk: Efficiency Loss (-parts)"
             ],
             "Value": [
                 row_loss_hrs,
@@ -259,14 +295,14 @@ if app_mode == "Combined Executive Report":
         # Split Tables
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("##### Run Rate Metrics")
+            st.markdown("##### Run Rate Metrics (Time-Based)")
             st.table(pd.DataFrame({
                 "Metric": ["RR Efficiency", "RR MTBF", "RR MTTR"],
                 "Value": [row_rr_eff, row_rr_mtbf, row_rr_mttr]
             }))
         with c2:
             if cr_metrics:
-                st.markdown(f"##### Capacity Metrics (Est. {global_cavities} Cavities)")
+                st.markdown(f"##### Capacity Metrics (Parts-Based, Est. {global_cavities} Cavities)")
                 st.table(pd.DataFrame({
                     "Metric": ["Loss Hours", "Est. Cost", "Parts Opp. Lost", "Optimal", "Actual", "Availability Loss", "Efficiency Loss"],
                     "Value": [row_loss_hrs, row_cost, row_opp_lost, val_opt, val_act, val_avail, val_eff]
@@ -277,7 +313,7 @@ if app_mode == "Combined Executive Report":
     st.divider()
 
     # --- 5. EXTENSIVE GRAPH FEED ---
-    st.subheader("📈 Detailed Analysis Feed")
+    st.subheader("📈 Detailed Analysis Feed (20+ Charts)")
     st.markdown("*Review the following charts to identify specific performance patterns.*")
 
     if not cr_all_shots_df.empty:
@@ -288,17 +324,17 @@ if app_mode == "Combined Executive Report":
         
         # 1. SCATTER: Cycle Time
         fig1 = px.scatter(shots, x='SHOT TIME', y='Actual CT', color='Shot Type', title="1. Cycle Time Scatter Plot",
-                          color_discrete_map={'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#77dd77', 'RR Downtime (Stop)': 'gray'})
+                          color_discrete_map={'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#77dd77', 'RR Downtime (Stop)': 'gray', 'Run Break (Excluded)': 'lightgray'})
         st.plotly_chart(fig1, use_container_width=True)
         
         # 2. HISTOGRAM: Distribution
-        fig2 = px.histogram(shots[shots['stop_flag']==0], x='Actual CT', nbins=50, title="2. Cycle Time Distribution",
+        fig2 = px.histogram(shots[shots['stop_flag']==0], x='Actual CT', nbins=50, title="2. Cycle Time Distribution (Normal Shots Only)",
                             color_discrete_sequence=['#3498DB'])
         st.plotly_chart(fig2, use_container_width=True)
         
         # 3. BAR: Daily Output
         daily_out = shots.groupby('Date_Str')['Working Cavities'].sum().reset_index()
-        fig3 = px.bar(daily_out, x='Date_Str', y='Working Cavities', title="3. Total Daily Output",
+        fig3 = px.bar(daily_out, x='Date_Str', y='Working Cavities', title="3. Total Daily Output (Parts)",
                       color_discrete_sequence=['#2ECC71'])
         st.plotly_chart(fig3, use_container_width=True)
         
@@ -310,33 +346,33 @@ if app_mode == "Combined Executive Report":
 
         # 5. PIE: Breakdown
         fig7 = px.pie(shots, names='Shot Type', title="5. Shot Classification Breakdown",
-                      color='Shot Type', color_discrete_map={'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#77dd77', 'RR Downtime (Stop)': 'gray'})
+                      color='Shot Type', color_discrete_map={'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#77dd77', 'RR Downtime (Stop)': 'gray', 'Run Break (Excluded)': 'lightgray'})
         st.plotly_chart(fig7, use_container_width=True)
 
         # 6. BAR: Longest Stops
         if 'adj_ct_sec' in shots.columns:
             stops = shots[shots['stop_flag']==1].copy()
             top_stops = stops.nlargest(10, 'adj_ct_sec')
-            fig8 = px.bar(top_stops, x='SHOT TIME', y='adj_ct_sec', title="6. Top 10 Longest Stop Events (sec)",
+            fig8 = px.bar(top_stops, x='SHOT TIME', y='adj_ct_sec', title="6. Top 10 Longest Stop Events (seconds)",
                           color_discrete_sequence=['#E74C3C'])
             st.plotly_chart(fig8, use_container_width=True)
         
         # 7. SUNBURST: Loss
         if cr_metrics:
             loss_data = pd.DataFrame([
-                {'Category': 'Loss', 'Subcat': 'Availability', 'Value': cr_metrics['loss_availability_parts']},
-                {'Category': 'Loss', 'Subcat': 'Efficiency', 'Value': cr_metrics['loss_efficiency_parts']}
+                {'Category': 'Total Loss', 'Subcat': 'Availability Loss (RR Downtime)', 'Value': cr_metrics['loss_availability_parts']},
+                {'Category': 'Total Loss', 'Subcat': 'Efficiency Loss (Slow Cycles - Gains)', 'Value': cr_metrics['loss_efficiency_parts']}
             ])
             loss_data['Value'] = loss_data['Value'].abs()
-            fig9 = px.sunburst(loss_data, path=['Category', 'Subcat'], values='Value', title="7. Capacity Loss Hierarchy",
+            fig9 = px.sunburst(loss_data, path=['Category', 'Subcat'], values='Value', title="7. Capacity Loss Hierarchy (Parts)",
                                color_discrete_sequence=px.colors.qualitative.Pastel)
             st.plotly_chart(fig9, use_container_width=True)
         
         # 8. GAUGE: Stability
         stab_val = rr_metrics.get('stability', 0)
         fig14 = go.Figure(go.Indicator(
-            mode = "gauge+number", value = stab_val, title = {'text': "8. Overall Stability Index"},
-            gauge = {'axis': {'range': [None, 100]}, 'steps' : [{'range': [0, 85], 'color': "lightgray"}], 'threshold' : {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 85}}))
+            mode = "gauge+number", value = stab_val, title = {'text': "8. Overall Stability Index (%)"},
+            gauge = {'axis': {'range': [None, 100]}, 'steps' : [{'range': [0, 85], 'color': "#ff6961"}, {'range': [85, 100], 'color': "#77dd77"}], 'threshold' : {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': 85}}))
         st.plotly_chart(fig14, use_container_width=True)
         
         # 9. BAR: Shift Blocks
@@ -344,6 +380,53 @@ if app_mode == "Combined Executive Report":
         shift_perf = shots.groupby('Shift_Block')['Working Cavities'].sum().reset_index()
         fig19 = px.bar(shift_perf, x='Shift_Block', y='Working Cavities', title="9. Output by 8-Hour Shift Block")
         st.plotly_chart(fig19, use_container_width=True)
+
+        # 10. SCATTER: Cycle Time Deviation vs Time of Day
+        shots['CT_Deviation'] = shots['Actual CT'] - shots['Approved CT']
+        fig10 = px.scatter(shots, x='Hour', y='CT_Deviation', color='Shot Type', title="10. Cycle Time Deviation by Hour",
+                          color_discrete_map={'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#77dd77', 'RR Downtime (Stop)': 'gray', 'Run Break (Excluded)': 'lightgray'})
+        st.plotly_chart(fig10, use_container_width=True)
+
+        # 11. BOX PLOT: Cycle Time by Day of Week
+        fig11 = px.box(shots[shots['stop_flag']==0], x='Weekday', y='Actual CT', title="11. Cycle Time Variability by Day of Week")
+        st.plotly_chart(fig11, use_container_width=True)
+
+        # 12. RUN-BASED TREND: Loss over Runs
+        if 'run_id' in run_summary_df.columns:
+            run_summary_df['Run_ID_Str'] = run_summary_df.index + 1
+            fig12 = px.line(run_summary_df, x='Run_ID_Str', y='Total Capacity Loss (parts)', title="12. Total Parts Loss Trend Over Runs",
+                            markers=True, color_discrete_sequence=['#E74C3C'])
+            st.plotly_chart(fig12, use_container_width=True)
+            
+        # 13. RUN-BASED TREND: Stability
+        if 'run_id' in run_summary_df.columns:
+            fig13 = px.line(run_summary_df, x='Run_ID_Str', y='Total Shots (all)', title="13. Shots Per Run Trend",
+                            markers=True, color_discrete_sequence=['#3498DB'])
+            st.plotly_chart(fig13, use_container_width=True)
+            
+        # 14. DOWNTIME ANALYSIS: Stop Count by Day of Week
+        daily_stops = shots[shots['stop_event'] == True].groupby('Weekday').size().reindex(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'], fill_value=0).reset_index(name='Stop Count')
+        fig15 = px.bar(daily_stops, x='Weekday', y='Stop Count', title="14. Stop Event Count by Day of Week")
+        st.plotly_chart(fig15, use_container_width=True)
+
+        # 15. DOWNTIME ANALYSIS: Stop Time Heatmap (Hour vs Day of Week)
+        stop_time_heatmap = shots[shots['stop_flag'] == 1].groupby(['Weekday', 'Hour'])['adj_ct_sec'].sum().reset_index(name='Downtime (sec)')
+        stop_time_heatmap['Weekday'] = pd.Categorical(stop_time_heatmap['Weekday'], categories=['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'], ordered=True)
+        fig16 = px.density_heatmap(stop_time_heatmap, x='Hour', y='Weekday', z='Downtime (sec)', title="15. Downtime Heatmap (Hour vs Day)",
+                                   color_continuous_scale='Reds')
+        st.plotly_chart(fig16, use_container_width=True)
+
+        # 16. BAR: Longest Runs
+        if 'duration_min' in rr_calc.results['run_durations'].columns:
+            top_runs = rr_calc.results['run_durations'].nlargest(10, 'duration_min')
+            fig17 = px.bar(top_runs, x='run_group', y='duration_min', title="16. Top 10 Longest Stable Run Durations (Min)",
+                           color_discrete_sequence=['#2ECC71'])
+            st.plotly_chart(fig17, use_container_width=True)
+
+        # 17. SCATTER: Downtime Time vs Downtime Parts
+        fig18 = px.scatter(run_summary_df.reset_index(), x='Capacity Loss (downtime) (sec)', y='Capacity Loss (downtime) (parts)',
+                           title="17. Downtime Correlation (Time vs Parts)", trendline="ols")
+        st.plotly_chart(fig18, use_container_width=True)
 
 
 # ==============================================================================
