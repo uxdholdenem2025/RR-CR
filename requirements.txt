@@ -5,3 +5,4 @@ plotly
 xlsxwriter
 python-dateutil
 openpyxl
+statsmodels
