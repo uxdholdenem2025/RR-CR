@@ -241,7 +241,6 @@ if app_mode == "Combined Executive Report":
             "stop_events": rr_res.get('stop_events', 0)
         }
     else:
-        # This warning means the standardization failed, and RR skipped calculation
         st.warning("Run Rate data could not be processed: Missing 'SHOT TIME' or 'Actual CT' columns.")
 
 
@@ -252,7 +251,7 @@ if app_mode == "Combined Executive Report":
     if not cavities_found:
         st.warning("⚠️ 'Working Cavities' column not found. Used global default. Capacity (parts) metrics may be inaccurate if cavities vary per run.")
     
-    # Data Preparation for Display
+    # Data Preparation
     if cr_metrics:
         row_opp_lost = f"{cr_metrics['loss_total_parts']:,.0f} parts"
         loss_hours = cr_metrics['loss_total_sec'] / 3600.0
