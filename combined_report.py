@@ -180,7 +180,6 @@ if app_mode == "Combined Executive Report":
     )
     
     if not cr_results_df.empty and not cr_all_shots_df.empty:
-        # --- CRITICAL FIX: AGGREGATE BY RUN (Matches Original App) ---
         # The correct way to get totals that align with the CR waterfall is by summing the run summaries.
         run_summary_df = cr_utils.calculate_run_summaries(cr_all_shots_df, 100.0)
         
@@ -194,7 +193,7 @@ if app_mode == "Combined Executive Report":
             net_efficiency_loss_parts = loss_slow_parts - gain_fast_parts
             
             total_loss_parts = run_summary_df['Total Capacity Loss (parts)'].sum()
-            # The total downtime in seconds used for reporting (Loss in Machine Hours)
+            # This is the SUM of downtime seconds from the run calculation (the correct total time lost)
             total_loss_sec = run_summary_df['Capacity Loss (downtime) (sec)'].sum() 
             
             cr_perf = (total_actual / total_optimal) * 100 if total_optimal > 0 else 0
@@ -203,13 +202,14 @@ if app_mode == "Combined Executive Report":
                 "optimal": total_optimal,
                 "actual": total_actual,
                 "loss_total_parts": total_loss_parts,
-                "loss_total_sec": total_loss_sec, # This is the key Downtime Time
+                "loss_total_sec": total_loss_sec, 
                 "loss_availability_parts": loss_downtime_parts,
                 "loss_efficiency_parts": net_efficiency_loss_parts,
                 "perf": cr_perf
             }
 
     # -- RR Calculation --
+    # RR logic uses its own data preparation inside the calculator, but we filter the input here.
     rr_df_input = df_filtered.rename(columns={'SHOT TIME': 'shot_time', 'Actual CT': 'ACTUAL CT'})
     
     rr_calc = run_rate_utils.RunRateCalculator(
