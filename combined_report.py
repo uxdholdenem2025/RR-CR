@@ -123,7 +123,6 @@ if app_mode == "Combined Executive Report":
             if df_raw is not None and not df_raw.empty:
                 
                 # 2. Preprocess using CR logic (standardizes SHOT TIME, etc)
-                # This ensures we get all the CR standardized column names onto df_master
                 df_master, min_val, max_val = cr_utils.get_preprocessed_data(df_raw.copy())
                 
                 if not df_master.empty:
@@ -219,11 +218,9 @@ if app_mode == "Combined Executive Report":
         rr_input_filtered = rr_input_filtered[~rr_input_filtered['Plant Area'].isin(['Maintenance', 'Warehouse'])].copy()
 
     # The RR calculator expects 'shot_time' and 'ACTUAL CT'. 
-    # We must explicitly map them because the CR utils standardize the names using the full version of the data, 
-    # but the RR logic uses its own prepare_data() function that expects certain column names.
     if 'SHOT TIME' in rr_input_filtered.columns and 'Actual CT' in rr_input_filtered.columns:
         # FIX: The RR calculator expects 'ACTUAL CT' (uppercase) and 'shot_time' (lowercase)
-        # Also, ensure 'Actual CT' is converted to float BEFORE renaming for RR internal logic.
+        # Ensure 'Actual CT' is converted to float BEFORE renaming for RR internal logic.
         rr_input_filtered['Actual CT'] = pd.to_numeric(rr_input_filtered['Actual CT'], errors='coerce')
         rr_input_filtered.rename(columns={'SHOT TIME': 'shot_time', 'Actual CT': 'ACTUAL CT'}, inplace=True)
         
@@ -244,6 +241,7 @@ if app_mode == "Combined Executive Report":
             "stop_events": rr_res.get('stop_events', 0)
         }
     else:
+        # This warning means the standardization failed, and RR skipped calculation
         st.warning("Run Rate data could not be processed: Missing 'SHOT TIME' or 'Actual CT' columns.")
 
 
@@ -254,7 +252,7 @@ if app_mode == "Combined Executive Report":
     if not cavities_found:
         st.warning("⚠️ 'Working Cavities' column not found. Used global default. Capacity (parts) metrics may be inaccurate if cavities vary per run.")
     
-    # Data Preparation
+    # Data Preparation for Display
     if cr_metrics:
         row_opp_lost = f"{cr_metrics['loss_total_parts']:,.0f} parts"
         loss_hours = cr_metrics['loss_total_sec'] / 3600.0
