@@ -8,7 +8,6 @@ from datetime import datetime, date
 # Import utils and refactored apps
 import cr_utils
 import run_rate_utils
-# FIX: Renamed import to cr_app_refactored to match file system
 import cr_app_refactored
 import run_rate_app_refactored
 
@@ -114,7 +113,11 @@ if app_mode == "Combined Executive Report":
     max_global_date = None
     cavities_found = False
 
+    # Store uploaded file object
+    uploaded_file_obj = None
+
     if master_file:
+        uploaded_file_obj = master_file
         try:
             # Load using CR utils as base loader
             df_raw = cr_utils.load_data(master_file)
@@ -181,7 +184,6 @@ if app_mode == "Combined Executive Report":
     )
     
     if not cr_results_df.empty and not cr_all_shots_df.empty:
-        # --- CRITICAL FIX: AGGREGATE BY RUN (Matches Original App) ---
         # The correct way to get totals that align with the CR waterfall is by summing the run summaries.
         run_summary_df = cr_utils.calculate_run_summaries(cr_all_shots_df, 100.0)
         
@@ -211,25 +213,41 @@ if app_mode == "Combined Executive Report":
             }
 
     # -- RR Calculation --
-    # RR logic uses its own data preparation inside the calculator, but we filter the input here.
-    rr_df_input = df_filtered.rename(columns={'SHOT TIME': 'shot_time', 'Actual CT': 'ACTUAL CT'})
+    # CRITICAL FIX: The RR calculator needs 'Actual CT' (which may be named 'Actual CT' or 'cycle time' in raw data)
+    # and 'shot_time'. We map those back from the CR master dataframe.
+    rr_df_input = pd.DataFrame()
     
-    rr_calc = run_rate_utils.RunRateCalculator(
-        rr_df_input, 
-        global_ct_tolerance, 
-        global_stop_gap, 
-        analysis_mode='aggregate'
-    )
-    rr_res = rr_calc.results
+    # Find the original 'Actual CT' column name in df_raw
+    actual_ct_cols = [c for c in df_raw.columns if 'actual ct' in str(c).lower() or 'cycle time' in str(c).lower()]
+    actual_ct_col = actual_ct_cols[0] if actual_ct_cols else None
     
-    rr_metrics = {
-        "mttr": rr_res.get('mttr_min', 0),
-        "mtbf": rr_res.get('mtbf_min', 0),
-        "stability": rr_res.get('stability_index', 0),
-        "efficiency": rr_res.get('efficiency', 0) * 100,
-        "total_shots": rr_res.get('total_shots', 0),
-        "stop_events": rr_res.get('stop_events', 0)
-    }
+    if 'SHOT TIME' in df_filtered.columns and actual_ct_col:
+        rr_df_input = df_filtered.copy().rename(columns={'SHOT TIME': 'shot_time'})
+        # Ensure 'ACTUAL CT' is present in the RR data frame using the original raw data column if necessary
+        if 'Actual CT' not in rr_df_input.columns and actual_ct_col in df_filtered.columns:
+             rr_df_input['ACTUAL CT'] = df_filtered[actual_ct_col]
+        elif 'Actual CT' in rr_df_input.columns:
+             rr_df_input.rename(columns={'Actual CT': 'ACTUAL CT'}, inplace=True)
+
+        rr_calc = run_rate_utils.RunRateCalculator(
+            rr_df_input, 
+            global_ct_tolerance, 
+            global_stop_gap, 
+            analysis_mode='aggregate'
+        )
+        rr_res = rr_calc.results
+        
+        rr_metrics = {
+            "mttr": rr_res.get('mttr_min', 0),
+            "mtbf": rr_res.get('mtbf_min', 0),
+            "stability": rr_res.get('stability_index', 0),
+            "efficiency": rr_res.get('efficiency', 0) * 100,
+            "total_shots": rr_res.get('total_shots', 0),
+            "stop_events": rr_res.get('stop_events', 0)
+        }
+    else:
+        st.warning("Run Rate data could not be processed: Missing 'SHOT TIME' or 'Actual CT' columns.")
+
 
     # --- 4. INSIGHT TABLES ---
     
@@ -273,7 +291,7 @@ if app_mode == "Combined Executive Report":
     row_rr_mtbf = f"{rr_metrics.get('mtbf', 0):.0f} Minutes"
     row_rr_mttr = f"{rr_metrics.get('mttr', 0):.0f} Minutes"
     
-    if cavities_found and cr_metrics:
+    if 'rr_calc' in locals() and rr_metrics['total_shots'] > 0:
         # Unified Table
         data_unified = {
             "KPI": [
