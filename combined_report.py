@@ -223,6 +223,8 @@ if app_mode == "Combined Executive Report":
     # but the RR logic uses its own prepare_data() function that expects certain column names.
     if 'SHOT TIME' in rr_input_filtered.columns and 'Actual CT' in rr_input_filtered.columns:
         # FIX: The RR calculator expects 'ACTUAL CT' (uppercase) and 'shot_time' (lowercase)
+        # Also, ensure 'Actual CT' is converted to float BEFORE renaming for RR internal logic.
+        rr_input_filtered['Actual CT'] = pd.to_numeric(rr_input_filtered['Actual CT'], errors='coerce')
         rr_input_filtered.rename(columns={'SHOT TIME': 'shot_time', 'Actual CT': 'ACTUAL CT'}, inplace=True)
         
         rr_calc = run_rate_utils.RunRateCalculator(
