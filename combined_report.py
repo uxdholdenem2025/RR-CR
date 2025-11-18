@@ -8,8 +8,8 @@ from datetime import datetime, date
 # Import utils and refactored apps
 import cr_utils
 import run_rate_utils
-import cr
-import run_rate_app_refactored
+import cr  # This imports your cr.py file
+import run_rate_app_refactored # This imports your run_rate_app_refactored.py file
 
 # ==============================================================================
 # --- PAGE CONFIGURATION ---
