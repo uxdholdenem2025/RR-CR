@@ -32,7 +32,7 @@ app_mode = st.sidebar.radio(
 st.sidebar.markdown("---")
 
 # ==============================================================================
-# --- HELPER: METRIC BADGE ---
+# --- HELPER: METRIC BADGE (Used in Combined Report) ---
 # ==============================================================================
 def metric_with_badge(label, value, badge_text, badge_color="green", help_text=None):
     """
@@ -72,30 +72,35 @@ if app_mode == "Combined Executive Report":
     with st.sidebar.expander("⚙️ Calculation Parameters", expanded=True):
         global_run_interval = st.slider(
             "Run Interval Threshold (Hours)", 1.0, 24.0, 8.0, 0.5,
+            key="global_run_interval",
             help="Gaps longer than this define a new 'Production Run'."
         )
         global_stop_gap = st.slider(
             "Stop Threshold / Gap (Seconds)", 0.0, 10.0, 2.0, 0.5,
+            key="global_stop_gap",
             help="Idle time required to trigger a stop event."
         )
         # Default set to 0.05 (5%) to match cr.py defaults for maximum consistency
         global_ct_tolerance = st.slider(
             "Cycle Time Tolerance (%)", 0.01, 0.50, 0.05, 0.01,
+            key="global_ct_tolerance",
             help="Variation allowed around Mode CT before flagging as abnormal."
         )
         global_cavities = st.number_input(
             "Default Working Cavities", min_value=1, value=2,
+            key="global_cavities",
             help="Used if 'Working Cavities' column is missing."
         )
         global_exclude_maintenance = st.toggle(
             "Remove Maintenance/Warehouse Shots", value=False,
+            key="global_exclude_maintenance",
             help="Exclude shots where Plant Area is Maintenance or Warehouse."
         )
 
     # Cost Settings
     with st.sidebar.expander("💰 Cost Settings", expanded=False):
-        machine_rate = st.number_input("Machine Rate ($/h)", value=170.0, step=10.0)
-        labor_rate = st.number_input("Labor Cost ($/h)", value=10.0, step=5.0)
+        machine_rate = st.number_input("Machine Rate ($/h)", value=170.0, step=10.0, key="global_machine_rate")
+        labor_rate = st.number_input("Labor Cost ($/h)", value=10.0, step=5.0, key="global_labor_rate")
 
     # SINGLE GLOBAL FILE UPLOADER
     st.sidebar.header("2. Data Source")
@@ -176,6 +181,7 @@ if app_mode == "Combined Executive Report":
     
     if not cr_results_df.empty and not cr_all_shots_df.empty:
         # --- CRITICAL FIX: AGGREGATE BY RUN (Matches Original App) ---
+        # The correct way to get totals that align with the CR waterfall is by summing the run summaries.
         run_summary_df = cr_utils.calculate_run_summaries(cr_all_shots_df, 100.0)
         
         if not run_summary_df.empty:
@@ -248,6 +254,9 @@ if app_mode == "Combined Executive Report":
         val_act = f"{cr_metrics['actual']:,.0f} ({gap_total:+,.0f} parts)"
         val_avail = f"-{avail_loss_abs:,.0f} parts"
         val_eff = f"-{eff_loss_abs:,.0f} parts"
+        
+        # CRITICAL FIX: Use the CR utility function for downtime time
+        downtime_time_formatted = cr_utils.format_seconds_to_dhm(cr_metrics['loss_total_sec'])
     else:
         row_opp_lost = "N/A"
         row_loss_hrs = "N/A"
@@ -256,6 +265,7 @@ if app_mode == "Combined Executive Report":
         val_act = "N/A"
         val_avail = "N/A"
         val_eff = "N/A"
+        downtime_time_formatted = "N/A"
 
     row_rr_eff = f"{rr_metrics.get('efficiency', 0):.1f}%"
     row_rr_mtbf = f"{rr_metrics.get('mtbf', 0):.0f} Minutes"
