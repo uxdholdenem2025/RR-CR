@@ -5,8 +5,14 @@ import plotly.graph_objects as go
 from datetime import datetime
 import calendar
 
-# Import all calculation functions from the helper file
-import cr_utils
+# Import functions exactly as in your original cr.py
+from cr_utils import (
+    format_seconds_to_dhm,
+    load_data,
+    get_preprocessed_data,
+    calculate_run_summaries,
+    run_capacity_calculation_cached_v2
+)
 
 # ==================================================================
 #                       MAIN APP UI FUNCTION
@@ -25,25 +31,25 @@ def run_capacity_risk_ui():
     st.markdown(f"**App Version:** `{__version__}` (RR-Downtime + CR-Inefficiency)")
 
     # --- Sidebar for Inputs ---
-    st.sidebar.header("Capacity Risk Configuration") # Renamed for clarity
+    st.sidebar.header("Capacity Risk Configuration") 
 
     uploaded_file = st.sidebar.file_uploader(
         "Upload Raw Data File (CSV or Excel)", 
         type=["csv", "xlsx", "xls"],
-        key="cr_file_uploader" # Add a unique key
+        key="cr_file_uploader" 
     )
 
     # --- Main Page Display ---
     if uploaded_file is not None:
 
-        df_raw = cr_utils.load_data(uploaded_file)
+        df_raw = load_data(uploaded_file)
         
         if df_raw is None or df_raw.empty:
             st.error("Uploaded file is empty or could not be loaded.")
             st.stop()
             
         # --- Pre-process data to get date ranges for filters ---
-        df_processed, min_date, max_date = cr_utils.get_preprocessed_data(df_raw)
+        df_processed, min_date, max_date = get_preprocessed_data(df_raw)
         
         if df_processed.empty or min_date is None:
             st.error("Could not parse 'SHOT TIME' column or find valid data.")
@@ -57,7 +63,7 @@ def run_capacity_risk_ui():
         analysis_period_selector = st.sidebar.radio(
             "Filter data by:",
             ["Entire File", "Daily", "Weekly", "Monthly", "Custom Period"],
-            key="cr_analysis_period_selector" # Added key
+            key="cr_analysis_period_selector"
         )
         
         df_to_process = pd.DataFrame()
@@ -191,7 +197,7 @@ def run_capacity_risk_ui():
             cache_key = "_".join(map(str, cache_key_parts))
 
             # --- Run the cached calculation (from cr_utils) ---
-            results_df, all_shots_df = cr_utils.run_capacity_calculation_cached_v2(
+            results_df, all_shots_df = run_capacity_calculation_cached_v2(
                 df_to_process,
                 toggle_filter,
                 default_cavities,
@@ -209,8 +215,13 @@ def run_capacity_risk_ui():
                 # --- 1. Calculate all dataframes ONCE ---
                 daily_summary_df = results_df.copy()
                 # Call logic function from cr_utils
-                run_summary_df = cr_utils.calculate_run_summaries(all_shots_df, target_output_perc)
+                run_summary_df = calculate_run_summaries(all_shots_df, target_output_perc)
                 run_summary_df_for_total = run_summary_df.copy()
+                
+                # Initialize report tables to empty to avoid NameError if logic skips
+                report_table_1 = pd.DataFrame()
+                report_table_optimal = pd.DataFrame()
+                report_table_target = pd.DataFrame()
                 
                 # --- 2. Get All-Time totals ---
                 all_time_totals = {}
@@ -245,10 +256,10 @@ def run_capacity_risk_ui():
                     total_net_cycle_loss_sec = total_slow_loss_sec - total_fast_gain_sec
                     
                     run_time_sec_total = run_summary_df_for_total['Filtered Run Time (sec)'].sum()
-                    run_time_dhm_total = cr_utils.format_seconds_to_dhm(run_time_sec_total) # Use util function
+                    run_time_dhm_total = format_seconds_to_dhm(run_time_sec_total) # Use util function
                     
                     total_actual_ct_sec = run_summary_df_for_total['Actual Cycle Time Total (sec)'].sum()
-                    total_actual_ct_dhm = cr_utils.format_seconds_to_dhm(total_actual_ct_sec) # Use util function
+                    total_actual_ct_dhm = format_seconds_to_dhm(total_actual_ct_sec) # Use util function
                     
                     total_calculated_net_loss_parts = total_downtime_loss_parts + total_net_cycle_loss_parts
                     total_calculated_net_loss_sec = total_downtime_loss_sec + total_net_cycle_loss_sec
@@ -304,11 +315,11 @@ def run_capacity_risk_ui():
                                 total_loss_vs_target_sec = run_summary_df_for_total['Capacity Loss (vs Target) (sec)'].sum()
                                 st.markdown(f"**Capacity Loss (vs Target)**")
                                 st.markdown(f"<h3><span style='color:red;'>{total_loss_vs_target_parts:,.0f} parts</span></h3>", unsafe_allow_html=True) 
-                                st.caption(f"Total Time Lost vs Target: {cr_utils.format_seconds_to_dhm(total_loss_vs_target_sec)}")
+                                st.caption(f"Total Time Lost vs Target: {format_seconds_to_dhm(total_loss_vs_target_sec)}")
                             else:
                                 st.markdown(f"**Total Capacity Loss (True)**")
                                 st.markdown(f"<h3><span style='color:red;'>{all_time_totals['total_true_net_loss_parts']:,.0f} parts</span></h3>", unsafe_allow_html=True) 
-                                st.caption(f"Total Time Lost: {cr_utils.format_seconds_to_dhm(all_time_totals['total_true_net_loss_sec'])}")
+                                st.caption(f"Total Time Lost: {format_seconds_to_dhm(all_time_totals['total_true_net_loss_sec'])}")
 
                     # --- Waterfall Chart Layout ---
                     st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
@@ -381,7 +392,7 @@ def run_capacity_risk_ui():
                         with st.container(border=True):
                             st.markdown(f"**Total Net Impact**")
                             st.markdown(f"<h3><span style='{net_loss_color}'>{net_loss_val:,.0f} parts</span></h3>", unsafe_allow_html=True)
-                            st.caption(f"Net Time Lost: {cr_utils.format_seconds_to_dhm(all_time_totals['total_calculated_net_loss_sec'])}")
+                            st.caption(f"Net Time Lost: {format_seconds_to_dhm(all_time_totals['total_calculated_net_loss_sec'])}")
                         
                         table_data = {
                             "Metric": [
@@ -397,10 +408,10 @@ def run_capacity_risk_ui():
                                 all_time_totals['total_fast_gain_parts']
                             ],
                             "Time": [
-                                cr_utils.format_seconds_to_dhm(all_time_totals['total_downtime_loss_sec']),
-                                cr_utils.format_seconds_to_dhm(all_time_totals['total_net_cycle_loss_sec']),
-                                cr_utils.format_seconds_to_dhm(all_time_totals['total_slow_loss_sec']),
-                                cr_utils.format_seconds_to_dhm(all_time_totals['total_fast_gain_sec'])
+                                format_seconds_to_dhm(all_time_totals['total_downtime_loss_sec']),
+                                format_seconds_to_dhm(all_time_totals['total_net_cycle_loss_sec']),
+                                format_seconds_to_dhm(all_time_totals['total_slow_loss_sec']),
+                                format_seconds_to_dhm(all_time_totals['total_fast_gain_sec'])
                             ]
                         }
                         df_table = pd.DataFrame(table_data)
@@ -430,23 +441,51 @@ def run_capacity_risk_ui():
                     # --- Collapsible Daily Summary Table ---
                     if analysis_period_selector == "Entire File" or analysis_period_selector == "Custom Period":
                         with st.expander("View Daily Summary Data"):
-                            # ... (all your daily summary df logic) ...
-                            daily_summary_df['Total Capacity Loss (d/h/m)'] = daily_summary_df['Total Capacity Loss (sec)'].apply(cr_utils.format_seconds_to_dhm)
-                            # ...
-                            daily_summary_df['Filtered Run Time (d/h/m)'] = daily_summary_df['Filtered Run Time (sec)'].apply(cr_utils.format_seconds_to_dhm)
-                            daily_summary_df['Actual Cycle Time Total (d/h/m)'] = daily_summary_df['Actual Cycle Time Total (sec)'].apply(cr_utils.format_seconds_to_dhm)
-                            # ... (rest of daily summary table) ...
-                            st.dataframe(daily_kpi_table, use_container_width=True)
+                            
+                            daily_summary_df['Actual Cycle Time Total (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Actual Cycle Time Total (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
+                            daily_summary_df['Actual Output (parts %)'] = np.where( results_df['Optimal Output (parts)'] > 0, daily_summary_df['Actual Output (parts)'] / results_df['Optimal Output (parts)'], 0 )
+                            perc_base_parts = daily_summary_df['Optimal Output (parts)']
+                            perc_base_sec = daily_summary_df['Filtered Run Time (sec)']
+                            daily_summary_df['Total Capacity Loss (time %)'] = np.where( perc_base_sec > 0, daily_summary_df['Total Capacity Loss (sec)'] / perc_base_sec, 0 )
+                            daily_summary_df['Total Capacity Loss (parts %)'] = np.where( perc_base_parts > 0, daily_summary_df['Total Capacity Loss (parts)'] / perc_base_parts, 0 )
+                            daily_summary_df['Total Capacity Loss (d/h/m)'] = daily_summary_df['Total Capacity Loss (sec)'].apply(format_seconds_to_dhm)
+                            daily_summary_df['Capacity Loss (vs Target) (parts %)'] = np.where( daily_summary_df['Target Output (parts)'] > 0, daily_summary_df['Capacity Loss (vs Target) (parts)'] / daily_summary_df['Target Output (parts)'], 0 )
+                            daily_summary_df['Capacity Loss (vs Target) (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Capacity Loss (vs Target) (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
+                            daily_summary_df['Capacity Loss (vs Target) (d/h/m)'] = daily_summary_df['Capacity Loss (vs Target) (sec)'].apply(format_seconds_to_dhm)
+                            daily_summary_df['Filtered Run Time (d/h/m)'] = daily_summary_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
+                            daily_summary_df['Actual Cycle Time Total (d/h/m)'] = daily_summary_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
 
+                            daily_kpi_table = pd.DataFrame(index=daily_summary_df.index)
+                            daily_kpi_table[run_time_label] = daily_summary_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
+                            daily_kpi_table['Actual Production Time'] = daily_summary_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
+                            daily_kpi_table['Actual Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (parts %)']:.1%})", axis=1)
+
+                            if benchmark_view == "Optimal Output":
+                                daily_kpi_table['Total Capacity Loss (Time)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (d/h/m)']} ({r['Total Capacity Loss (time %)']:.1%})", axis=1)
+                                daily_kpi_table['Total Capacity Loss (parts)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                                st.dataframe(daily_kpi_table, use_container_width=True)
+                            else: # Target Output
+                                daily_summary_df['Gap to Target (parts)'] = pd.to_numeric(daily_summary_df['Gap to Target (parts)'], errors='coerce').fillna(0)
+                                daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
+                                daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
+                                st.dataframe(daily_kpi_table.style.applymap(
+                                    lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
+                                    subset=['Gap to Target (parts)']
+                                ), use_container_width=True)
 
                     st.divider()
 
                     # --- 3. AGGREGATED REPORT (Chart & Table) ---
-                    # ... (all your agg_df logic) ...
+                    
                     if display_frequency == 'by Run':
                         agg_df = run_summary_df.copy()
                         chart_title_prefix = "Run-by-Run"
-                    # ... (rest of agg_df logic) ...
+                    elif display_frequency == 'Weekly':
+                        agg_df = daily_summary_df.resample('W').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
+                        chart_title_prefix = "Weekly"
+                    elif display_frequency == 'Monthly':
+                        agg_df = daily_summary_df.resample('ME').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
+                        chart_title_prefix = "Monthly"
                     else: # Daily
                         agg_df = daily_summary_df.copy()
                         chart_title_prefix = "Daily"
@@ -456,21 +495,140 @@ def run_capacity_risk_ui():
                     if display_df.empty:
                         st.warning(f"No data to display for the '{display_frequency}' frequency.")
                     else:
-                        # ... (all your display_df logic) ...
-                        display_df['Filtered Run Time (d/h/m)'] = display_df['Filtered Run Time (sec)'].apply(cr_utils.format_seconds_to_dhm)
-                        display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(cr_utils.format_seconds_to_dhm)
-                        # ... (rest of display_df logic) ...
+                        display_df['Capacity Loss (vs Target) (parts)'] = np.maximum(0, -display_df['Gap to Target (parts)'])
+                        perc_base_parts = display_df['Optimal Output (parts)']
+                        chart_title = f"{chart_title_prefix} Capacity Report (vs Optimal)"
+                        optimal_100_base = display_df['Optimal Output (parts)']
+                        display_df['Actual Output (%)'] = np.where( optimal_100_base > 0, display_df['Actual Output (parts)'] / optimal_100_base, 0)
+                        display_df['Production Shots (%)'] = np.where( display_df['Total Shots (all)'] > 0, display_df['Production Shots'] / display_df['Total Shots (all)'], 0)
+                        display_df['Actual Cycle Time Total (time %)'] = np.where( display_df['Filtered Run Time (sec)'] > 0, display_df['Actual Cycle Time Total (sec)'] / display_df['Filtered Run Time (sec)'], 0)
+                        display_df['Capacity Loss (downtime) (parts %)'] = np.where( perc_base_parts > 0, display_df['Capacity Loss (downtime) (parts)'] / perc_base_parts, 0)
+                        display_df['Capacity Loss (slow cycle time) (parts %)'] = np.where( perc_base_parts > 0, display_df['Capacity Loss (slow cycle time) (parts)'] / perc_base_parts, 0)
+                        display_df['Capacity Gain (fast cycle time) (parts %)'] = np.where( perc_base_parts > 0, display_df['Capacity Gain (fast cycle time) (parts)'] / perc_base_parts, 0)
+                        display_df['Total Capacity Loss (parts %)'] = np.where( perc_base_parts > 0, display_df['Total Capacity Loss (parts)'] / perc_base_parts, 0)
+                        display_df['Capacity Loss (vs Target) (parts %)'] = np.where( display_df['Target Output (parts)'] > 0, display_df['Capacity Loss (vs Target) (parts)'] / display_df['Target Output (parts)'], 0)
+                        display_df['Total Capacity Loss (cycle time) (parts)'] = display_df['Capacity Loss (slow cycle time) (parts)'] - display_df['Capacity Gain (fast cycle time) (parts)']
+                        display_df['(Ref) Net Loss (RR)'] = display_df['Capacity Loss (downtime) (parts)']
+                        display_df['(Ref) Net Loss (Slow)'] = display_df['Capacity Loss (slow cycle time) (parts)']
+                        display_df['(Ref) Net Gain (Fast)'] = display_df['Capacity Gain (fast cycle time) (parts)']
+                        display_df['(Ref) Total Net Loss'] = display_df['(Ref) Net Loss (RR)'] + display_df['(Ref) Net Loss (Slow)'] - display_df['(Ref) Net Gain (Fast)']
+                        display_df['loss_downtime_ratio'] = np.where(display_df['(Ref) Total Net Loss'] != 0, display_df['(Ref) Net Loss (RR)'] / display_df['(Ref) Total Net Loss'], 0)
+                        display_df['loss_slow_ratio'] = np.where(display_df['(Ref) Total Net Loss'] != 0, display_df['(Ref) Net Loss (Slow)'] / display_df['(Ref) Total Net Loss'], 0)
+                        display_df['gain_fast_ratio'] = np.where(display_df['(Ref) Total Net Loss'] != 0, -display_df['(Ref) Net Gain (Fast)'] / display_df['(Ref) Total Net Loss'], 0)
+                        display_df['Allocated Loss (RR Downtime)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_downtime_ratio']
+                        display_df['Allocated Loss (Slow Cycles)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_slow_ratio']
+                        display_df['Allocated Gain (Fast Cycles)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['gain_fast_ratio']
+                        display_df['Filtered Run Time (d/h/m)'] = display_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
+                        display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
+                        
+                        if 'Start Time' in display_df.columns:
+                            display_df['Start Time_str'] = pd.to_datetime(display_df['Start Time']).dt.strftime('%Y-%m-%d %H:%M')
+                            
+                        if display_frequency == 'Weekly': xaxis_title = "Week"
+                        elif display_frequency == 'Monthly': xaxis_title = "Month"
+                        elif display_frequency == 'by Run': xaxis_title = "Run ID"
+                        else: xaxis_title = "Date"
+                        
+                        if display_frequency == 'by Run':
+                            chart_df = display_df.reset_index().rename(columns={'run_id': 'X-Axis'})
+                            # Add 1 to run_id for display
+                            chart_df['X-Axis'] = 'Run ' + (chart_df['X-Axis'] + 1).astype(str)
+                        else:
+                            chart_df = display_df.reset_index().rename(columns={'Date': 'X-Axis'})
+                        
 
                         # --- Unified Performance Breakdown Chart ---
                         st.header(f"{display_frequency} Performance Breakdown (vs {benchmark_title})")
                         fig_ts = go.Figure()
-                        # ... (all your fig_ts logic) ...
+                        
+                        fig_ts.add_trace(go.Bar(
+                            x=chart_df['X-Axis'], y=chart_df['Actual Output (parts)'], name='Actual Output',
+                            marker_color='#3498DB', customdata=chart_df['Actual Output (%)'],
+                            hovertemplate='Actual Output: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
+                        ))
+                        
+                        chart_df['Net Cycle Time Loss (parts)'] = chart_df['Total Capacity Loss (cycle time) (parts)']
+                        chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Net Cycle Time Loss (parts)'])
+
+                        fig_ts.add_trace(go.Bar(
+                            x=chart_df['X-Axis'], y=chart_df['Net Cycle Time Loss (positive)'], name='Capacity Loss (cycle time)',
+                            marker_color='#ffb347',
+                            customdata=np.stack((
+                                chart_df['Net Cycle Time Loss (parts)'],
+                                chart_df['Capacity Loss (slow cycle time) (parts)'],
+                                chart_df['Capacity Gain (fast cycle time) (parts)']
+                            ), axis=-1),
+                            # --- v8.6: Fixed SyntaxError by removing stray underscore ---
+                            hovertemplate=
+                                '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
+                                'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
+                                'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' +
+                                '<extra></extra>'
+                        ))
+                        
+                        fig_ts.add_trace(go.Bar(
+                            x=chart_df['X-Axis'], y=chart_df['Capacity Loss (downtime) (parts)'], name='Run Rate Downtime (Stops)',
+                            marker_color='#808080', customdata=chart_df['Capacity Loss (downtime) (parts %)'],
+                            hovertemplate='Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
+                        ))
+                        
+                        fig_ts.update_layout(barmode='stack')
+
+                        if benchmark_view == "Target Output":
+                            fig_ts.add_trace(go.Scatter(
+                                x=chart_df['X-Axis'], y=chart_df['Target Output (parts)'],
+                                name=f'Target Output ({target_output_perc:.0f}%)', mode='lines',
+                                line=dict(color='deepskyblue', dash='dash'),
+                                hovertemplate=f'<b>Target Output ({target_output_perc:.0f}%)</b>: %{{y:,.0f}}<extra></extra>'
+                            ))
+                            
+                        fig_ts.add_trace(go.Scatter(
+                            x=chart_df['X-Axis'], y=chart_df['Optimal Output (parts)'],
+                            name='Optimal Output (100%)',
+                            mode='lines',
+                            line=dict(color='darkblue', dash='dot'),
+                            hovertemplate='Optimal Output (100%): %{y:,.0f}<extra></extra>'
+                        ))
+
+                        fig_ts.update_layout(
+                            title=chart_title, xaxis_title=xaxis_title, yaxis_title='Parts (Output & Loss)',
+                            legend_title='Metric', hovermode="x unified"
+                        )
                         st.plotly_chart(fig_ts, use_container_width=True)
 
                         # --- Full Data Table ---
                         display_df_totals = display_df
+                        
                         st.header(f"Production Totals Report ({display_frequency})")
-                        # ... (all your report_table_1 logic) ...
+                        if display_frequency == 'by Run':
+                            report_table_1_df = display_df_totals.reset_index().rename(columns={'run_id': 'Run ID'})
+                            # Add 1 to run_id for display
+                            report_table_1_df['Run ID'] = report_table_1_df['Run ID'] + 1
+                            
+                            # --- v8.3 FIX: Use the correct bottom-up downtime sum ---
+                            report_table_1_df['Total Downtime (sec)'] = report_table_1_df['Capacity Loss (downtime) (sec)']
+                            # --- End v8.3 Fix ---
+
+                            report_table_1_df['Total Downtime (d/h/m)'] = report_table_1_df['Total Downtime (sec)'].apply(format_seconds_to_dhm)
+                            report_table_1 = pd.DataFrame(index=report_table_1_df.index)
+                            report_table_1['Run ID'] = report_table_1_df['Run ID']
+                            report_table_1['Start Time'] = report_table_1_df['Start Time_str']
+                            report_table_1['Overall Run Time'] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']}", axis=1)
+                            report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']}", axis=1)
+                            report_table_1['Total Downtime'] = report_table_1_df.apply(lambda r: f"{r['Total Downtime (d/h/m)']}", axis=1)
+                            report_table_1['Total Shots'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
+                            report_table_1['Production Shots'] = report_table_1_df['Production Shots'].map('{:,.0f}'.format)
+                            report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
+                            report_table_1['Mode CT'] = report_table_1_df['Mode CT'].map('{:.2f}s'.format)
+                        else: # Daily, Weekly, Monthly
+                            report_table_1 = pd.DataFrame(index=display_df_totals.index)
+                            report_table_1_df = display_df_totals
+                            report_table_1['Total Shots (all)'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
+                            report_table_1['Production Shots'] = report_table_1_df.apply(lambda r: f"{r['Production Shots']:,.0f} ({r['Production Shots (%)']:.1%})", axis=1)
+                            report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
+                            report_table_1[run_time_label] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
+                            report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
+
                         st.dataframe(report_table_1, use_container_width=True)
 
                         # --- Conditional Tables ---
