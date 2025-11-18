@@ -112,35 +112,33 @@ if app_mode == "Combined Executive Report":
     min_global_date = None
     max_global_date = None
     cavities_found = False
-
-    # Store uploaded file object
-    uploaded_file_obj = None
-
+    
+    # Store df_raw separately for RR logic to access original column names if needed
+    df_raw = pd.DataFrame() 
+    
     if master_file:
-        uploaded_file_obj = master_file
         try:
-            # Load using CR utils as base loader
+            # 1. Load data
             df_raw = cr_utils.load_data(master_file)
             if df_raw is not None and not df_raw.empty:
-                # Preprocess using CR logic (standardizes SHOT TIME, etc)
-                df_master, min_val, max_val = cr_utils.get_preprocessed_data(df_raw)
+                
+                # 2. Preprocess using CR logic (standardizes SHOT TIME, etc)
+                # This ensures we get all the CR standardized column names onto df_master
+                df_master, min_val, max_val = cr_utils.get_preprocessed_data(df_raw.copy())
                 
                 if not df_master.empty:
                     # Add 'date_obj' for RR compatibility
                     df_master['date_obj'] = df_master['SHOT TIME'].dt.date
                     
-                    # Check for cavities column
-                    cav_cols = [c for c in df_master.columns if 'cavit' in str(c).lower()]
+                    # Check for cavities column (if present, CR preprocessing handles renaming)
+                    cav_cols = [c for c in df_raw.columns if 'cavit' in str(c).lower()]
                     if cav_cols:
-                        # Rename to standard
                         df_master.rename(columns={cav_cols[0]: 'Working Cavities'}, inplace=True)
                         cavities_found = True
                     else:
-                        # Inject global default
                         df_master['Working Cavities'] = global_cavities
                         cavities_found = False 
 
-                    # Set dates
                     min_global_date = min_val
                     max_global_date = max_val
                     
@@ -177,7 +175,7 @@ if app_mode == "Combined Executive Report":
     rr_metrics = {}
     
     # -- CR Calculation --
-    # Use cached wrapper
+    # Use cached wrapper on the standardized, filtered data.
     cr_results_df, cr_all_shots_df = cr_utils.run_capacity_calculation_cached_v2(
         df_filtered, global_exclude_maintenance, global_cavities, 100.0, 
         global_ct_tolerance, global_stop_gap, global_run_interval
@@ -213,24 +211,19 @@ if app_mode == "Combined Executive Report":
             }
 
     # -- RR Calculation --
-    # CRITICAL FIX: The RR calculator needs 'Actual CT' (which may be named 'Actual CT' or 'cycle time' in raw data)
-    # and 'shot_time'. We map those back from the CR master dataframe.
-    rr_df_input = pd.DataFrame()
+    rr_metrics = {}
     
-    # Find the original 'Actual CT' column name in df_raw
-    actual_ct_cols = [c for c in df_raw.columns if 'actual ct' in str(c).lower() or 'cycle time' in str(c).lower()]
-    actual_ct_col = actual_ct_cols[0] if actual_ct_cols else None
-    
-    if 'SHOT TIME' in df_filtered.columns and actual_ct_col:
-        # Create RR input by taking the CR standardized dataframe...
-        rr_df_input = df_filtered.copy().rename(columns={'SHOT TIME': 'shot_time'})
-        
-        # ...and making sure it has the expected 'ACTUAL CT' column
-        if 'Actual CT' in rr_df_input.columns:
-             rr_df_input.rename(columns={'Actual CT': 'ACTUAL CT'}, inplace=True)
+    # Ensure CR pre-processing names are used, then filter maintenance if required globally
+    rr_input_filtered = df_filtered.copy()
+    if global_exclude_maintenance:
+        rr_input_filtered = rr_input_filtered[~rr_input_filtered['Plant Area'].isin(['Maintenance', 'Warehouse'])].copy()
 
+    # The RR calculator expects 'shot_time' and 'ACTUAL CT'
+    if 'SHOT TIME' in rr_input_filtered.columns and 'Actual CT' in rr_input_filtered.columns:
+        rr_input_filtered.rename(columns={'SHOT TIME': 'shot_time', 'Actual CT': 'ACTUAL CT'}, inplace=True)
+        
         rr_calc = run_rate_utils.RunRateCalculator(
-            rr_df_input, 
+            rr_input_filtered, 
             global_ct_tolerance, 
             global_stop_gap, 
             analysis_mode='aggregate'
@@ -256,13 +249,12 @@ if app_mode == "Combined Executive Report":
     if not cavities_found:
         st.warning("⚠️ 'Working Cavities' column not found. Used global default. Capacity (parts) metrics may be inaccurate if cavities vary per run.")
     
-    # Data Preparation
+    # Data Preparation for Display
     if cr_metrics:
         row_opp_lost = f"{cr_metrics['loss_total_parts']:,.0f} parts"
         loss_hours = cr_metrics['loss_total_sec'] / 3600.0
         total_cost = loss_hours * (machine_rate + labor_rate)
         
-        # Calculate badge color/text for Availability/Efficiency Loss
         avail_loss_abs = abs(cr_metrics['loss_availability_parts'])
         eff_loss_abs = abs(cr_metrics['loss_efficiency_parts'])
         
@@ -275,7 +267,6 @@ if app_mode == "Combined Executive Report":
         val_avail = f"-{avail_loss_abs:,.0f} parts"
         val_eff = f"-{eff_loss_abs:,.0f} parts"
         
-        # CRITICAL FIX: Use the CR utility function for downtime time
         downtime_time_formatted = cr_utils.format_seconds_to_dhm(cr_metrics['loss_total_sec'])
     else:
         row_opp_lost = "N/A"
