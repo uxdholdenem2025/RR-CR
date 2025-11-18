@@ -222,11 +222,11 @@ if app_mode == "Combined Executive Report":
     actual_ct_col = actual_ct_cols[0] if actual_ct_cols else None
     
     if 'SHOT TIME' in df_filtered.columns and actual_ct_col:
+        # Create RR input by taking the CR standardized dataframe...
         rr_df_input = df_filtered.copy().rename(columns={'SHOT TIME': 'shot_time'})
-        # Ensure 'ACTUAL CT' is present in the RR data frame using the original raw data column if necessary
-        if 'Actual CT' not in rr_df_input.columns and actual_ct_col in df_filtered.columns:
-             rr_df_input['ACTUAL CT'] = df_filtered[actual_ct_col]
-        elif 'Actual CT' in rr_df_input.columns:
+        
+        # ...and making sure it has the expected 'ACTUAL CT' column
+        if 'Actual CT' in rr_df_input.columns:
              rr_df_input.rename(columns={'Actual CT': 'ACTUAL CT'}, inplace=True)
 
         rr_calc = run_rate_utils.RunRateCalculator(
