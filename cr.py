@@ -6,167 +6,167 @@ from datetime import datetime
 import calendar
 
 # Import all calculation functions from the helper file
-from cr_utils import (
-    format_seconds_to_dhm,
-    load_data,
-    get_preprocessed_data,
-    calculate_run_summaries,
-    run_capacity_calculation_cached_v2
-)
+import cr_utils
 
 # ==================================================================
-# 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
-# ==================================================================
-# v8.6: Final alignment logic for run_rate_app.py
-__version__ = "v9.2 (downtime bug fix 999.9)"
+#                       MAIN APP UI FUNCTION
 # ==================================================================
 
-# ==================================================================
-#                       MAIN APP LOGIC
-# ==================================================================
-
-# --- Page Config ---
-st.set_page_config(
-    page_title=f"Capacity Risk Calculator (v{__version__})",
-    layout="wide"
-)
-
-st.title("Capacity Risk Report")
-st.markdown(f"**App Version:** `{__version__}` (RR-Downtime + CR-Inefficiency)")
-
-# --- Sidebar for Inputs ---
-st.sidebar.header("Configuration")
-
-uploaded_file = st.sidebar.file_uploader("Upload Raw Data File (CSV or Excel)", type=["csv", "xlsx", "xls"])
-
-# --- Main Page Display ---
-if uploaded_file is not None:
-
-    df_raw = load_data(uploaded_file)
+def run_capacity_risk_ui():
+    """
+    This function contains the main UI logic for the Capacity Risk app.
+    It will be imported and called by combined_report.py.
+    """
     
-    if df_raw is None or df_raw.empty:
-        st.error("Uploaded file is empty or could not be loaded.")
-        st.stop()
+    # Get version from utils (or define it here)
+    __version__ = "v9.2 (downtime bug fix 999.9)"
+
+    st.title("Capacity Risk Report")
+    st.markdown(f"**App Version:** `{__version__}` (RR-Downtime + CR-Inefficiency)")
+
+    # --- Sidebar for Inputs ---
+    st.sidebar.header("Capacity Risk Configuration") # Renamed for clarity
+
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload Raw Data File (CSV or Excel)", 
+        type=["csv", "xlsx", "xls"],
+        key="cr_file_uploader" # Add a unique key
+    )
+
+    # --- Main Page Display ---
+    if uploaded_file is not None:
+
+        df_raw = cr_utils.load_data(uploaded_file)
         
-    # --- Pre-process data to get date ranges for filters ---
-    df_processed, min_date, max_date = get_preprocessed_data(df_raw)
-    
-    if df_processed.empty or min_date is None:
-        st.error("Could not parse 'SHOT TIME' column or find valid data.")
-        st.stop()
-
-    st.success(f"Successfully loaded file: **{uploaded_file.name}**")
-    
-    # --- 1. "Select Analysis Period" control ---
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("1. Select Analysis Period")
-    analysis_period_selector = st.sidebar.radio(
-        "Filter data by:",
-        ["Entire File", "Daily", "Weekly", "Monthly", "Custom Period"],
-        key="analysis_period_selector"
-    )
-    
-    df_to_process = pd.DataFrame()
-
-    if analysis_period_selector == "Daily":
-        available_dates = sorted(df_processed["date"].unique(), reverse=True)
-        selected_date = st.sidebar.selectbox("Select Date", available_dates, format_func=lambda d: d.strftime('%Y-%m-%d'))
-        df_to_process = df_processed[df_processed["date"] == selected_date].copy()
-    
-    elif analysis_period_selector == "Weekly":
-        available_weeks = sorted(df_processed["week"].unique(), reverse=True)
-        selected_week = st.sidebar.selectbox("Select Week", available_weeks, format_func=lambda w: f"Week {w.week}, {w.start_time.year}")
-        df_to_process = df_processed[df_processed["week"] == selected_week].copy()
-
-    elif analysis_period_selector == "Monthly":
-        available_months = sorted(df_processed["month"].unique(), reverse=True)
-        selected_month = st.sidebar.selectbox("Select Month", available_months, format_func=lambda m: m.strftime('%B %Y'))
-        df_to_process = df_processed[df_processed["month"] == selected_month].copy()
-    
-    elif analysis_period_selector == "Custom Period":
-        start_date = st.sidebar.date_input("Start Date", min_date, min_value=min_date, max_value=max_date)
-        end_date = st.sidebar.date_input("End Date", max_date, min_value=min_date, max_value=max_date)
-        if start_date > end_date:
-            st.sidebar.error("Start Date must be before End Date.")
+        if df_raw is None or df_raw.empty:
+            st.error("Uploaded file is empty or could not be loaded.")
             st.stop()
-        else:
-            mask = (df_processed['date'] >= start_date) & (df_processed['date'] <= end_date)
-            df_to_process = df_processed[mask].copy()
-    
-    else: # "Entire File"
-        df_to_process = df_processed.copy()
+            
+        # --- Pre-process data to get date ranges for filters ---
+        df_processed, min_date, max_date = cr_utils.get_preprocessed_data(df_raw)
+        
+        if df_processed.empty or min_date is None:
+            st.error("Could not parse 'SHOT TIME' column or find valid data.")
+            st.stop()
 
-    # --- 2. "Select Grouping" ---
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("2. Select Grouping")
-    display_frequency = st.sidebar.radio(
-        "Display Frequency",
-        ['Daily', 'Weekly', 'Monthly', 'by Run'],
-        index=3, # Default to 'by Run'
-        horizontal=True,
-        key="display_frequency"
-    )
-    
-    # --- 3. "Set Calculation Logic" ---
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("3. Set Calculation Logic")
-    
-    mode_ct_tolerance = st.sidebar.slider(
-        "Mode CT Tolerance (%)", 0.01, 0.50, 0.05, 0.01,  # v8.5: Set default to 0.05 (5%)
-        help="Tolerance band (±) around the **Actual Mode CT**. Shots outside this band are flagged as 'Abnormal Cycle' (Downtime)."
-    )
-    
-    rr_downtime_gap = st.sidebar.slider(
-        "RR Downtime Gap (sec)", 0.0, 10.0, 2.0, 0.5, 
-        help="Minimum idle time between shots to be considered a stop."
-    )
-    
-    run_interval_hours = st.sidebar.slider(
-        "Run Interval Threshold (hours)", 1.0, 24.0, 8.0, 0.5,
-        help="Gaps between shots *longer* than this will be excluded from all calculations (e.g., weekends)."
-    )
-
-    toggle_filter = st.sidebar.toggle(
-        "Remove Maintenance/Warehouse Shots",
-        value=False, # Default OFF
-        help="If ON, all calculations will exclude shots where 'Plant Area' is 'Maintenance' or 'Warehouse'."
-    )
-    
-    default_cavities = st.sidebar.number_input(
-        "Default Working Cavities",
-        min_value=1,
-        value=2,
-        help="This value will be used if the 'Working Cavities' column is not found in the file."
-    )
-
-    # --- 4. "Set Report Benchmark" ---
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("4. Set Report Benchmark")
-    
-    benchmark_view = st.sidebar.radio(
-        "Select Report Benchmark",
-        ['Optimal Output', 'Target Output'],
-        index=0, # Default to Optimal
-        horizontal=False,
-        help="Select the benchmark to compare against (e.g., 'Total Capacity Loss' vs 'Optimal' or 'Target')."
-    )
-
-    if benchmark_view == "Target Output":
-        target_output_perc = st.sidebar.slider(
-            "Target Output % (of Optimal)",
-            min_value=0.0, max_value=100.0,
-            value=90.0, # Default 90%
-            step=1.0,
-            format="%.0f%%",
-            help="Sets the 'Target Output (parts)' goal as a percentage of 'Optimal Output (parts)'."
+        st.success(f"Successfully loaded file: **{uploaded_file.name}**")
+        
+        # --- 1. "Select Analysis Period" control ---
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("1. Select Analysis Period")
+        analysis_period_selector = st.sidebar.radio(
+            "Filter data by:",
+            ["Entire File", "Daily", "Weekly", "Monthly", "Custom Period"],
+            key="cr_analysis_period_selector" # Added key
         )
-    else:
-        target_output_perc = 100.0 
-    
-    st.sidebar.caption(f"App Version: **{__version__}**")
+        
+        df_to_process = pd.DataFrame()
 
-    # --- Run Calculation ---
-    if df_raw is not None:
+        if analysis_period_selector == "Daily":
+            available_dates = sorted(df_processed["date"].unique(), reverse=True)
+            selected_date = st.sidebar.selectbox("Select Date", available_dates, format_func=lambda d: d.strftime('%Y-%m-%d'), key="cr_daily_select")
+            df_to_process = df_processed[df_processed["date"] == selected_date].copy()
+        
+        elif analysis_period_selector == "Weekly":
+            available_weeks = sorted(df_processed["week"].unique(), reverse=True)
+            selected_week = st.sidebar.selectbox("Select Week", available_weeks, format_func=lambda w: f"Week {w.week}, {w.start_time.year}", key="cr_weekly_select")
+            df_to_process = df_processed[df_processed["week"] == selected_week].copy()
+
+        elif analysis_period_selector == "Monthly":
+            available_months = sorted(df_processed["month"].unique(), reverse=True)
+            selected_month = st.sidebar.selectbox("Select Month", available_months, format_func=lambda m: m.strftime('%B %Y'), key="cr_monthly_select")
+            df_to_process = df_processed[df_processed["month"] == selected_month].copy()
+        
+        elif analysis_period_selector == "Custom Period":
+            start_date = st.sidebar.date_input("Start Date", min_date, min_value=min_date, max_value=max_date, key="cr_custom_start")
+            end_date = st.sidebar.date_input("End Date", max_date, min_value=min_date, max_value=max_date, key="cr_custom_end")
+            if start_date > end_date:
+                st.sidebar.error("Start Date must be before End Date.")
+                st.stop()
+            else:
+                mask = (df_processed['date'] >= start_date) & (df_processed['date'] <= end_date)
+                df_to_process = df_processed[mask].copy()
+        
+        else: # "Entire File"
+            df_to_process = df_processed.copy()
+
+        # --- 2. "Select Grouping" ---
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("2. Select Grouping")
+        display_frequency = st.sidebar.radio(
+            "Display Frequency",
+            ['Daily', 'Weekly', 'Monthly', 'by Run'],
+            index=3, # Default to 'by Run'
+            horizontal=True,
+            key="cr_display_frequency"
+        )
+        
+        # --- 3. "Set Calculation Logic" ---
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("3. Set Calculation Logic")
+        
+        mode_ct_tolerance = st.sidebar.slider(
+            "Mode CT Tolerance (%)", 0.01, 0.50, 0.05, 0.01,
+            key="cr_mode_ct_tolerance",
+            help="Tolerance band (±) around the **Actual Mode CT**. Shots outside this band are flagged as 'Abnormal Cycle' (Downtime)."
+        )
+        
+        rr_downtime_gap = st.sidebar.slider(
+            "RR Downtime Gap (sec)", 0.0, 10.0, 2.0, 0.5, 
+            key="cr_rr_downtime_gap",
+            help="Minimum idle time between shots to be considered a stop."
+        )
+        
+        run_interval_hours = st.sidebar.slider(
+            "Run Interval Threshold (hours)", 1.0, 24.0, 8.0, 0.5,
+            key="cr_run_interval_hours",
+            help="Gaps between shots *longer* than this will be excluded from all calculations (e.g., weekends)."
+        )
+
+        toggle_filter = st.sidebar.toggle(
+            "Remove Maintenance/Warehouse Shots",
+            value=False,
+            key="cr_toggle_filter",
+            help="If ON, all calculations will exclude shots where 'Plant Area' is 'Maintenance' or 'Warehouse'."
+        )
+        
+        default_cavities = st.sidebar.number_input(
+            "Default Working Cavities",
+            min_value=1,
+            value=2,
+            key="cr_default_cavities",
+            help="This value will be used if the 'Working Cavities' column is not found in the file."
+        )
+
+        # --- 4. "Set Report Benchmark" ---
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("4. Set Report Benchmark")
+        
+        benchmark_view = st.sidebar.radio(
+            "Select Report Benchmark",
+            ['Optimal Output', 'Target Output'],
+            index=0,
+            horizontal=False,
+            key="cr_benchmark_view",
+            help="Select the benchmark to compare against (e.g., 'Total Capacity Loss' vs 'Optimal' or 'Target')."
+        )
+
+        if benchmark_view == "Target Output":
+            target_output_perc = st.sidebar.slider(
+                "Target Output % (of Optimal)",
+                min_value=0.0, max_value=100.0,
+                value=90.0,
+                step=1.0,
+                format="%.0f%%",
+                key="cr_target_output_perc",
+                help="Sets the 'Target Output (parts)' goal as a percentage of 'Optimal Output (parts)'."
+            )
+        else:
+            target_output_perc = 100.0 
+        
+        st.sidebar.caption(f"App Version: **{__version__}**")
+
+        # --- Run Calculation ---
         with st.spinner("Calculating Capacity Risk..."):
             
             # Create a unique cache key based on all inputs
@@ -184,15 +184,14 @@ if uploaded_file is not None:
             if analysis_period_selector == "Custom Period":
                 cache_key_parts.extend([start_date, end_date])
             elif analysis_period_selector in ["Daily", "Weekly", "Monthly"]:
-                # Add the specific selection to the key
                 if 'selected_date' in locals(): cache_key_parts.append(selected_date)
                 if 'selected_week' in locals(): cache_key_parts.append(selected_week)
                 if 'selected_month' in locals(): cache_key_parts.append(selected_month)
                 
             cache_key = "_".join(map(str, cache_key_parts))
 
-            # --- Run the cached calculation ---
-            results_df, all_shots_df = run_capacity_calculation_cached_v2(
+            # --- Run the cached calculation (from cr_utils) ---
+            results_df, all_shots_df = cr_utils.run_capacity_calculation_cached_v2(
                 df_to_process,
                 toggle_filter,
                 default_cavities,
@@ -207,12 +206,13 @@ if uploaded_file is not None:
                 st.error("No valid data found for the selected period. Cannot proceed.")
             else:
                 
-                # --- 1. Calculate all dataframes ONCE at the top. ---
+                # --- 1. Calculate all dataframes ONCE ---
                 daily_summary_df = results_df.copy()
-                run_summary_df = calculate_run_summaries(all_shots_df, target_output_perc)
+                # Call logic function from cr_utils
+                run_summary_df = cr_utils.calculate_run_summaries(all_shots_df, target_output_perc)
                 run_summary_df_for_total = run_summary_df.copy()
                 
-                # --- 2. Get All-Time totals (for the selected period) ---
+                # --- 2. Get All-Time totals ---
                 all_time_totals = {}
                 
                 if run_summary_df_for_total.empty:
@@ -245,10 +245,10 @@ if uploaded_file is not None:
                     total_net_cycle_loss_sec = total_slow_loss_sec - total_fast_gain_sec
                     
                     run_time_sec_total = run_summary_df_for_total['Filtered Run Time (sec)'].sum()
-                    run_time_dhm_total = format_seconds_to_dhm(run_time_sec_total)
+                    run_time_dhm_total = cr_utils.format_seconds_to_dhm(run_time_sec_total) # Use util function
                     
                     total_actual_ct_sec = run_summary_df_for_total['Actual Cycle Time Total (sec)'].sum()
-                    total_actual_ct_dhm = format_seconds_to_dhm(total_actual_ct_sec)
+                    total_actual_ct_dhm = cr_utils.format_seconds_to_dhm(total_actual_ct_sec) # Use util function
                     
                     total_calculated_net_loss_parts = total_downtime_loss_parts + total_net_cycle_loss_parts
                     total_calculated_net_loss_sec = total_downtime_loss_sec + total_net_cycle_loss_sec
@@ -269,7 +269,7 @@ if uploaded_file is not None:
                         'total_calculated_net_loss_sec': total_calculated_net_loss_sec
                     }
                 
-                # --- Only display the single main tab ---
+                
                 tab1, = st.tabs(["Capacity Risk Report"])
 
                 with tab1:
@@ -282,43 +282,36 @@ if uploaded_file is not None:
                     # --- Box 1: Overall Summary ---
                     with st.container(border=True):
                         c1, c2, c3, c4 = st.columns(4)
-                        
                         with c1:
                             st.metric(run_time_label, all_time_totals['run_time_dhm_total'])
-                        
                         with c2:
                             if benchmark_view == "Target Output":
                                 st.metric(f"Target Output ({target_output_perc:.0f}%)", f"{all_time_totals['total_target']:,.0f}")
                                 st.caption(f"Optimal (100%): {all_time_totals['total_optimal_100']:,.0f}")
                             else:
                                 st.metric("Optimal Output (100%)", f"{all_time_totals['total_optimal_100']:,.0f}")
-                        
                         with c3:
                             st.metric(f"Actual Output ({actual_output_perc_val:.1%})", f"{all_time_totals['total_produced']:,.0f} parts")
                             st.caption(f"Actual Production Time: {all_time_totals['total_actual_ct_dhm']}")
-                            
                             if benchmark_view == "Target Output":
                                 gap_to_target = all_time_totals['total_produced'] - all_time_totals['total_target']
                                 gap_perc = (gap_to_target / all_time_totals['total_target']) if all_time_totals['total_target'] > 0 else 0
                                 gap_color = "green" if gap_to_target > 0 else "red"
                                 st.caption(f"Gap to Target: <span style='color:{gap_color};'>{gap_to_target:+,.0f} ({gap_perc:+.1%})</span>", unsafe_allow_html=True)
-                        
                         with c4:
                             if benchmark_view == "Target Output":
                                 total_loss_vs_target_parts = np.maximum(0, all_time_totals['total_target'] - all_time_totals['total_produced'])
                                 total_loss_vs_target_sec = run_summary_df_for_total['Capacity Loss (vs Target) (sec)'].sum()
-                                
                                 st.markdown(f"**Capacity Loss (vs Target)**")
                                 st.markdown(f"<h3><span style='color:red;'>{total_loss_vs_target_parts:,.0f} parts</span></h3>", unsafe_allow_html=True) 
-                                st.caption(f"Total Time Lost vs Target: {format_seconds_to_dhm(total_loss_vs_target_sec)}")
+                                st.caption(f"Total Time Lost vs Target: {cr_utils.format_seconds_to_dhm(total_loss_vs_target_sec)}")
                             else:
                                 st.markdown(f"**Total Capacity Loss (True)**")
                                 st.markdown(f"<h3><span style='color:red;'>{all_time_totals['total_true_net_loss_parts']:,.0f} parts</span></h3>", unsafe_allow_html=True) 
-                                st.caption(f"Total Time Lost: {format_seconds_to_dhm(all_time_totals['total_true_net_loss_sec'])}")
-                                
+                                st.caption(f"Total Time Lost: {cr_utils.format_seconds_to_dhm(all_time_totals['total_true_net_loss_sec'])}")
+
                     # --- Waterfall Chart Layout ---
                     st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
-                    st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
                     
                     c1, c2 = st.columns([1, 1])
 
@@ -388,7 +381,7 @@ if uploaded_file is not None:
                         with st.container(border=True):
                             st.markdown(f"**Total Net Impact**")
                             st.markdown(f"<h3><span style='{net_loss_color}'>{net_loss_val:,.0f} parts</span></h3>", unsafe_allow_html=True)
-                            st.caption(f"Net Time Lost: {format_seconds_to_dhm(all_time_totals['total_calculated_net_loss_sec'])}")
+                            st.caption(f"Net Time Lost: {cr_utils.format_seconds_to_dhm(all_time_totals['total_calculated_net_loss_sec'])}")
                         
                         table_data = {
                             "Metric": [
@@ -404,10 +397,10 @@ if uploaded_file is not None:
                                 all_time_totals['total_fast_gain_parts']
                             ],
                             "Time": [
-                                format_seconds_to_dhm(all_time_totals['total_downtime_loss_sec']),
-                                format_seconds_to_dhm(all_time_totals['total_net_cycle_loss_sec']),
-                                format_seconds_to_dhm(all_time_totals['total_slow_loss_sec']),
-                                format_seconds_to_dhm(all_time_totals['total_fast_gain_sec'])
+                                cr_utils.format_seconds_to_dhm(all_time_totals['total_downtime_loss_sec']),
+                                cr_utils.format_seconds_to_dhm(all_time_totals['total_net_cycle_loss_sec']),
+                                cr_utils.format_seconds_to_dhm(all_time_totals['total_slow_loss_sec']),
+                                cr_utils.format_seconds_to_dhm(all_time_totals['total_fast_gain_sec'])
                             ]
                         }
                         df_table = pd.DataFrame(table_data)
@@ -443,12 +436,12 @@ if uploaded_file is not None:
                             perc_base_sec = daily_summary_df['Filtered Run Time (sec)']
                             daily_summary_df['Total Capacity Loss (time %)'] = np.where( perc_base_sec > 0, daily_summary_df['Total Capacity Loss (sec)'] / perc_base_sec, 0 )
                             daily_summary_df['Total Capacity Loss (parts %)'] = np.where( perc_base_parts > 0, daily_summary_df['Total Capacity Loss (parts)'] / perc_base_parts, 0 )
-                            daily_summary_df['Total Capacity Loss (d/h/m)'] = daily_summary_df['Total Capacity Loss (sec)'].apply(format_seconds_to_dhm)
+                            daily_summary_df['Total Capacity Loss (d/h/m)'] = daily_summary_df['Total Capacity Loss (sec)'].apply(cr_utils.format_seconds_to_dhm)
                             daily_summary_df['Capacity Loss (vs Target) (parts %)'] = np.where( daily_summary_df['Target Output (parts)'] > 0, daily_summary_df['Capacity Loss (vs Target) (parts)'] / daily_summary_df['Target Output (parts)'], 0 )
                             daily_summary_df['Capacity Loss (vs Target) (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Capacity Loss (vs Target) (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
-                            daily_summary_df['Capacity Loss (vs Target) (d/h/m)'] = daily_summary_df['Capacity Loss (vs Target) (sec)'].apply(format_seconds_to_dhm)
-                            daily_summary_df['Filtered Run Time (d/h/m)'] = daily_summary_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
-                            daily_summary_df['Actual Cycle Time Total (d/h/m)'] = daily_summary_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
+                            daily_summary_df['Capacity Loss (vs Target) (d/h/m)'] = daily_summary_df['Capacity Loss (vs Target) (sec)'].apply(cr_utils.format_seconds_to_dhm)
+                            daily_summary_df['Filtered Run Time (d/h/m)'] = daily_summary_df['Filtered Run Time (sec)'].apply(cr_utils.format_seconds_to_dhm)
+                            daily_summary_df['Actual Cycle Time Total (d/h/m)'] = daily_summary_df['Actual Cycle Time Total (sec)'].apply(cr_utils.format_seconds_to_dhm)
 
                             daily_kpi_table = pd.DataFrame(index=daily_summary_df.index)
                             daily_kpi_table[run_time_label] = daily_summary_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
