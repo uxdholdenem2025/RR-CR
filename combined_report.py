@@ -5,12 +5,10 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, date
 
-# Import utils
+# Import utils and refactored apps
 import cr_utils
 import run_rate_utils
-
-# Import the app files (based on your file system screenshot)
-import cr 
+import cr_app_refactored
 import run_rate_app_refactored
 
 # ==============================================================================
@@ -39,8 +37,6 @@ st.sidebar.markdown("---")
 def metric_with_badge(label, value, badge_text, badge_color="green", help_text=None):
     """
     Custom component to display a metric with a colored badge below it.
-    Now supports a tooltip via the 'title' attribute.
-    Colors: green (#77dd77), red (#ff6961), orange (#ffb347), gray (#d3d3d3)
     """
     color_map = {
         "green": "#77dd77",
@@ -72,20 +68,25 @@ if app_mode == "Combined Executive Report":
     # --- 1. Global Settings & Data Upload (Sidebar) ---
     st.sidebar.header("1. Global Configuration")
     
-    # Shared Parameters (Crossover Settings)
+    # Shared Parameters
     with st.sidebar.expander("⚙️ Calculation Parameters", expanded=True):
         global_run_interval = st.slider(
             "Run Interval Threshold (Hours)", 1.0, 24.0, 8.0, 0.5,
-            help="Gaps longer than this define a new 'Production Run'. Applies to both CR and RR logic where applicable."
+            help="Gaps longer than this define a new 'Production Run'."
         )
         global_stop_gap = st.slider(
             "Stop Threshold / Gap (Seconds)", 0.0, 10.0, 2.0, 0.5,
-            help="Idle time required to trigger a stop event. Applies to both CR and RR."
+            help="Idle time required to trigger a stop event."
         )
         global_ct_tolerance = st.slider(
             "Cycle Time Tolerance (%)", 0.01, 0.50, 0.05, 0.01,
-            help="Variation allowed around Mode CT before flagging as abnormal. Applies to both CR and RR."
+            help="Variation allowed around Mode CT before flagging as abnormal."
         )
+
+    # NEW: Cost Settings
+    with st.sidebar.expander("💰 Cost Settings", expanded=True):
+        machine_rate = st.number_input("Machine Rate ($/h)", value=170.0, step=10.0)
+        labor_rate = st.number_input("Labor Cost ($/h)", value=10.0, step=5.0)
 
     # File Uploaders
     st.sidebar.header("2. Data Sources")
@@ -94,7 +95,6 @@ if app_mode == "Combined Executive Report":
     
     # --- 2. Data Loading & Date Filtering ---
     
-    # Initialize placeholders
     cr_data = pd.DataFrame()
     rr_data = pd.DataFrame()
     min_global_date = None
@@ -114,7 +114,6 @@ if app_mode == "Combined Executive Report":
     # Load RR Data
     if rr_file:
         try:
-            # Wrap single file in list because load_all_data expects a list
             rr_data_raw = run_rate_utils.load_all_data([rr_file])
             if rr_data_raw is not None and not rr_data_raw.empty:
                 rr_data = rr_data_raw.copy()
@@ -126,12 +125,11 @@ if app_mode == "Combined Executive Report":
         except Exception as e:
             st.sidebar.error(f"Error loading RR file: {e}")
 
-    # Date Picker (Configurable at top of page as requested)
+    # Date Picker
     if not cr_data.empty or not rr_data.empty:
         st.subheader("📅 Analysis Period")
         c1, c2 = st.columns([1, 3])
         with c1:
-            # Default to full range if available
             default_val = (min_global_date, max_global_date) if min_global_date and max_global_date else []
             date_range = st.date_input(
                 "Select Date Range",
@@ -160,7 +158,6 @@ if app_mode == "Combined Executive Report":
 
     # --- 3. Calculations & Data Prep ---
     
-    # Dictionaries to store display values
     cr_metrics = {}
     rr_metrics = {}
     
@@ -175,14 +172,25 @@ if app_mode == "Combined Executive Report":
         if not cr_results_df.empty:
             total_optimal = cr_results_df['Optimal Output (parts)'].sum()
             total_actual = cr_results_df['Actual Output (parts)'].sum()
-            total_loss = cr_results_df['Total Capacity Loss (parts)'].sum()
+            
+            # Breakdown of losses for "Availability" vs "Efficiency"
+            loss_downtime_parts = cr_results_df['Capacity Loss (downtime) (parts)'].sum()
+            loss_slow_parts = cr_results_df['Capacity Loss (slow cycle time) (parts)'].sum()
+            gain_fast_parts = cr_results_df['Capacity Gain (fast cycle time) (parts)'].sum()
+            net_efficiency_loss_parts = loss_slow_parts - gain_fast_parts
+            
+            total_loss_parts = cr_results_df['Total Capacity Loss (parts)'].sum()
+            total_loss_sec = cr_results_df['Total Capacity Loss (sec)'].sum()
             
             cr_perf = (total_actual / total_optimal) * 100 if total_optimal > 0 else 0
             
             cr_metrics = {
                 "optimal": total_optimal,
                 "actual": total_actual,
-                "loss": total_loss,
+                "loss_total_parts": total_loss_parts,
+                "loss_total_sec": total_loss_sec,
+                "loss_availability_parts": loss_downtime_parts,
+                "loss_efficiency_parts": net_efficiency_loss_parts,
                 "perf": cr_perf
             }
 
@@ -196,99 +204,90 @@ if app_mode == "Combined Executive Report":
         )
         rr_res = rr_calc.results
         
-        # Extract raw values for badges
         rr_metrics = {
             "mttr": rr_res.get('mttr_min', 0),
             "mtbf": rr_res.get('mtbf_min', 0),
             "stability": rr_res.get('stability_index', 0),
             "efficiency": rr_res.get('efficiency', 0) * 100,
-            "production_time_sec": rr_res.get('production_time_sec', 0),
-            "downtime_sec": rr_res.get('downtime_sec', 0),
-            "total_runtime_sec": rr_res.get('total_runtime_sec', 0),
-            "normal_shots": rr_res.get('normal_shots', 0),
-            "total_shots": rr_res.get('total_shots', 0),
-            "stop_events": rr_res.get('stop_events', 0),
-            "stopped_shots": rr_res.get('total_shots', 0) - rr_res.get('normal_shots', 0)
         }
 
-    # --- 4. Display KPI Cards with Badges ---
+    # --- 4. TOOLING PERFORMANCE TABLE (The "Insight" View) ---
     
-    if cr_metrics or rr_metrics:
-        st.subheader("Key Performance Indicators")
+    st.subheader("📋 Tooling Production Performance")
+    
+    if cr_metrics:
+        # Calculate Financials
+        loss_hours = cr_metrics['loss_total_sec'] / 3600.0
+        total_cost = loss_hours * (machine_rate + labor_rate)
         
-        # Row 1: Time & Stability
-        kpi_c1, kpi_c2, kpi_c3, kpi_c4, kpi_c5 = st.columns(5)
+        # Format values for the table
         
-        with kpi_c1:
-            if "mttr" in rr_metrics:
-                val = run_rate_utils.format_minutes_to_dhm(rr_metrics["mttr"])
-                st.metric("Run Rate MTTR", val, help="Mean Time To Repair: Average duration of a single stop event.")
-            else:
-                st.metric("Run Rate MTTR", "N/A")
+        # 1. Loss Hours
+        row_loss_hrs = f"{loss_hours:,.1f} Hours"
+        
+        # 2. Cost
+        row_cost = f"${total_cost:,.0f} *"
+        
+        # 3. Opportunity Lost
+        row_opp_lost = f"{cr_metrics['loss_total_parts']:,.0f} parts"
+        
+        # 4. RR Metrics
+        row_rr_eff = f"{rr_metrics.get('efficiency', 0):.1f}%" if rr_metrics else "N/A"
+        row_rr_mtbf = f"{rr_metrics.get('mtbf', 0):.0f} Minutes" if rr_metrics else "N/A"
+        row_rr_mttr = f"{rr_metrics.get('mttr', 0):.0f} Minutes" if rr_metrics else "N/A"
+        
+        # 5. Capacity Risk Breakdown
+        # Formatting exactly like the screenshot: "Actual: X (Loss Y)"
+        val_opt = f"{cr_metrics['optimal']:,.0f} parts"
+        
+        # Actual (Gap)
+        gap_total = cr_metrics['actual'] - cr_metrics['optimal']
+        val_act = f"{cr_metrics['actual']:,.0f} ({gap_total:+,.0f} parts)"
+        
+        # Availability (Gap) - This is Downtime Loss
+        # Note: In your screenshot, Availability is negative, representing loss
+        val_avail = f"-{cr_metrics['loss_availability_parts']:,.0f} parts"
+        
+        # Efficiency (Gap) - This is Cycle Time Loss
+        val_eff = f"-{cr_metrics['loss_efficiency_parts']:,.0f} parts"
 
-        with kpi_c2:
-            if "mtbf" in rr_metrics:
-                val = run_rate_utils.format_minutes_to_dhm(rr_metrics["mtbf"])
-                st.metric("Run Rate MTBF", val, help="Mean Time Between Failures: Average uptime between stop events.")
-            else:
-                st.metric("Run Rate MTBF", "N/A")
-
-        with kpi_c3:
-            if "total_runtime_sec" in rr_metrics:
-                val = run_rate_utils.format_duration(rr_metrics["total_runtime_sec"])
-                st.metric("Total Run Duration", val, help="Total wall-clock time from first to last shot.")
-            else:
-                st.metric("Total Run Duration", "N/A")
+        # Build Dataframe
+        data = {
+            "KPI": [
+                "Total Incurred Loss in Machine Hours",
+                f"Total Incurred Costs (Machine Rate + Labor)*",
+                "Parts Opportunity Lost",
+                "Run Rate Efficiency",
+                "Run Rate MTBF (Mean Time Between Failure)",
+                "Run Rate MTTR (Mean Time To Repair)",
+                "Capacity Risk: Optimal Output (100% OEE)",
+                "Capacity Risk: Actual Output",
+                "Capacity Risk: Availability Loss",
+                "Capacity Risk: Efficiency Loss"
+            ],
+            "Selected Scope": [
+                row_loss_hrs,
+                row_cost,
+                row_opp_lost,
+                row_rr_eff,
+                row_rr_mtbf,
+                row_rr_mttr,
+                val_opt,
+                val_act,
+                val_avail,
+                val_eff
+            ]
+        }
         
-        with kpi_c4:
-            if "production_time_sec" in rr_metrics:
-                val = run_rate_utils.format_duration(rr_metrics["production_time_sec"])
-                pct = (rr_metrics["production_time_sec"] / rr_metrics["total_runtime_sec"] * 100) if rr_metrics["total_runtime_sec"] > 0 else 0
-                metric_with_badge("Production Time", val, f"{pct:.1f}%", "green", help_text="Total time spent producing parts.")
-            else:
-                st.metric("Production Time", "N/A")
+        df_insight = pd.DataFrame(data)
         
-        with kpi_c5:
-            if "downtime_sec" in rr_metrics:
-                val = run_rate_utils.format_duration(rr_metrics["downtime_sec"])
-                pct = (rr_metrics["downtime_sec"] / rr_metrics["total_runtime_sec"] * 100) if rr_metrics["total_runtime_sec"] > 0 else 0
-                metric_with_badge("Downtime", val, f"{pct:.1f}%", "red", help_text="Total time the machine was stopped.")
-            else:
-                st.metric("Downtime", "N/A")
+        # Display
+        st.table(df_insight)
         
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # Row 2: Output & Shots
-        kpi_r2_c1, kpi_r2_c2, kpi_r2_c3, kpi_r2_c4 = st.columns(4)
-        
-        with kpi_r2_c1:
-            if "actual" in cr_metrics:
-                metric_with_badge("Actual Output (CR)", f"{cr_metrics['actual']:,.0f}", f"{cr_metrics['perf']:.1f}% of Optimal", "green" if cr_metrics['perf'] > 80 else "orange", help_text="Total parts produced vs Optimal (100%) Output.")
-            else:
-                st.metric("Actual Output", "N/A")
-
-        with kpi_r2_c2:
-            if "total_shots" in rr_metrics:
-                st.metric("Total Shots", f"{rr_metrics['total_shots']:,}", help="Total number of machine cycles.")
-            else:
-                st.metric("Total Shots", "N/A")
-
-        with kpi_r2_c3:
-            if "normal_shots" in rr_metrics:
-                pct = (rr_metrics["normal_shots"] / rr_metrics["total_shots"] * 100) if rr_metrics["total_shots"] > 0 else 0
-                metric_with_badge("Normal Shots", f"{rr_metrics['normal_shots']:,}", f"{pct:.1f}% of Total", "green", help_text="Shots within cycle time tolerance.")
-            else:
-                st.metric("Normal Shots", "N/A")
-
-        with kpi_r2_c4:
-            if "stop_events" in rr_metrics:
-                pct = (rr_metrics["stopped_shots"] / rr_metrics["total_shots"] * 100) if rr_metrics["total_shots"] > 0 else 0
-                metric_with_badge("Stop Events", f"{rr_metrics['stop_events']:,}", f"{pct:.1f}% Stopped Shots", "red", help_text="Number of times the machine stopped.")
-            else:
-                st.metric("Stop Events", "N/A")
+        st.caption(f"*Based on a machine rate cost of ${machine_rate}/h and labor costs of ${labor_rate}/h")
 
     else:
-        st.warning("No data available for the selected period.")
+        st.warning("Please upload Capacity Risk data to generate the Performance Table.")
 
     st.divider()
 
@@ -297,21 +296,16 @@ if app_mode == "Combined Executive Report":
     
     g1, g2 = st.columns(2)
     
-    # Graph 1: Capacity Risk Waterfall (if data exists)
+    # Graph 1: Capacity Risk Waterfall
     with g1:
         if "actual" in cr_metrics:
             st.markdown("#### Capacity Loss Breakdown")
-            tot_opt = cr_metrics['optimal']
-            tot_act = cr_metrics['actual']
-            # Re-fetch these details only if needed for chart, or assume processed above
-            loss_downtime = cr_results_df['Capacity Loss (downtime) (parts)'].sum()
-            loss_speed = cr_results_df['Capacity Loss (slow cycle time) (parts)'].sum() - cr_results_df['Capacity Gain (fast cycle time) (parts)'].sum()
             
             fig_waterfall = go.Figure(go.Waterfall(
                 name="Capacity", orientation="v",
                 measure=["absolute", "relative", "relative", "total"],
                 x=["Optimal", "Downtime Loss", "Speed Loss", "Actual"],
-                y=[tot_opt, -loss_downtime, -loss_speed, tot_act],
+                y=[cr_metrics['optimal'], -cr_metrics['loss_availability_parts'], -cr_metrics['loss_efficiency_parts'], cr_metrics['actual']],
                 connector={"line": {"color": "rgb(63, 63, 63)"}},
                 decreasing={"marker": {"color": "#ff6961"}},
                 increasing={"marker": {"color": "#2ca02c"}},
@@ -319,10 +313,8 @@ if app_mode == "Combined Executive Report":
             ))
             fig_waterfall.update_layout(height=350, title="Production Waterfall (Parts)")
             st.plotly_chart(fig_waterfall, use_container_width=True)
-        else:
-            st.info("Waiting for Capacity Risk Data...")
 
-    # Graph 2: Run Rate Stability Gauge (if data exists)
+    # Graph 2: Run Rate Stability Gauge
     with g2:
         if "stability" in rr_metrics:
             st.markdown("#### Stability Performance")
@@ -344,8 +336,6 @@ if app_mode == "Combined Executive Report":
             ))
             fig_gauge.update_layout(height=350)
             st.plotly_chart(fig_gauge, use_container_width=True)
-        else:
-            st.info("Waiting for Run Rate Data...")
 
 # ==============================================================================
 # --- MODULE 2 & 3: INDIVIDUAL APP LOADS ---
