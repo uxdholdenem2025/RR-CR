@@ -217,7 +217,6 @@ def run_capacity_risk_ui():
                 
                 if run_summary_df_for_total.empty:
                     st.error("Failed to calculate 'by Run' summary for All-Time totals.")
-                    # ... (set all_time_totals to 0) ...
                     all_time_totals = {
                         'total_produced': 0, 'total_downtime_loss_parts': 0,
                         'total_slow_loss_parts': 0, 'total_fast_gain_parts': 0,
